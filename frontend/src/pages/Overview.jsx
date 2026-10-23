@@ -56,7 +56,7 @@ export default function Overview() {
           hint={k?.precision != null ? `officer precision ${k.precision}%` : 'no closed incidents yet'} />
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.25fr_1fr]">
+      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
         <Card>
           <CardHeader title="Live violations" subtitle="Newest first"
             actions={<Link to="/incidents" className="text-xs font-medium text-accent hover:underline">View all</Link>} />
@@ -73,7 +73,7 @@ export default function Overview() {
         </Card>
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[1.25fr_1fr]">
+      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
         <Card>
           <CardHeader title="Violations, last 14 days" />
           <div className="h-56 px-3 py-4">
@@ -111,7 +111,7 @@ export default function Overview() {
           actions={<Link to="/employees" className="text-xs font-medium text-accent hover:underline">Directory</Link>} />
         {data?.employees?.length ? data.employees.map((e) => (
           <Link key={e.id} to={`/employees/${e.id}`}
-            className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-8 border-b border-line px-5 py-3 text-sm last:border-0 hover:bg-panel-2">
+            className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-8 border-b border-line px-5 py-3 text-sm last:border-0 hover:bg-panel-2">
             <div className="min-w-0">
               <p className="truncate font-medium text-ink">{e.full_name}</p>
               <p className="truncate text-xs text-ink-3">{e.role} · {e.department}{e.repeat_offender ? ' · Art. 83 escalation' : ''}</p>

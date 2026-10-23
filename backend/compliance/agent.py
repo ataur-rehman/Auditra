@@ -370,7 +370,8 @@ class SecurityCollector:
             return event
         if event_id == 4698:
             task = f.get('TaskName') or ''
-            if task.lower().startswith('\\microsoft\\'):
+            # Windows makes these itself (\Microsoft\..., \SoftLanding\<SID>\...); only user-made tasks matter.
+            if task.lower().startswith(('\\microsoft\\', '\\softlanding\\')):
                 return None
             event = self.base(root, 'TASK_CREATED', actor, event_id)
             event['details'] = {'task_name': task}
