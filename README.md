@@ -10,7 +10,7 @@ Detection scope is the team's workbook `Auditra_GDPR_Violation_Mapping.xlsx`: 22
 
 | Part | Where | What it does |
 |---|---|---|
-| Agent | `agent/` | A Windows service (`AuditraAgent.exe`). Reads the Security, Plug and Play and PrintService logs, plus copies to USB drives, visits to watched sites in Chrome and Edge, and file ages. It sends only structured events, keeps them in a local outbox while the server is unreachable, and switches on the Windows auditing it needs itself. |
+| Agent | `agent/` | A background agent (`AuditraAgent.exe`, run by Task Scheduler as SYSTEM). Reads the Security, Plug and Play and PrintService logs, plus copies to USB drives, visits to watched sites in Chrome and Edge, and file ages. It sends only structured events, keeps them in a local outbox while the server is unreachable, and switches on the Windows auditing it needs itself. |
 | API | `backend/` (Django + DRF, Postgres) | Ingest, rules (`compliance/detection/`), score (`scoring.py`), AI (`ai.py`), and the officer and admin API |
 | Console | `frontend/` (React, Vite, Tailwind) | Officer and admin views with a live feed, polled every 2 s, and an employee portal for the monitoring notice and laptop enrolment. Light and dark themes. |
 | ML research | `ml_pipeline_cert/` | The CERT r4.2 pipeline: 4 models evaluated, OCSVM exported. Its baselines feed `ai.py`. |
@@ -54,7 +54,7 @@ To host it on Railway (API and Postgres) and Vercel (console), and to install th
    2. In the console, open **Admin > Employees & Access** and click the key icon on Bilal's row to get an enrolment code.
    3. Double-click `agent\dist\AuditraAgent.exe`, approve the administrator prompt and type the code.
 
-   It installs the **Auditra Agent** service, which starts with Windows. For a rehearsal that prints every event, stop the service and run `cd agent; python -m auditra_agent run` in an Administrator PowerShell.
+   It registers the agent in Task Scheduler as SYSTEM, so it starts with Windows. For a rehearsal that prints every event, run `"C:\Program Files\Auditra\AuditraAgent.exe" stop`, then `cd agent; python -m auditra_agent run` in an Administrator PowerShell.
 4. **Laptop A:** open `http://<laptop-B-ip>:5173` and sign in.
 5. **Configure the organisation live, as admin.** This is real configuration, not seed data.
    - **Data Catalogue:** add `C:\AuditraCompany\Finance` (FINANCIAL, MEDIUM), `Payroll` (FINANCIAL, HIGH), `HR` (HR_EMPLOYEE, HIGH), `HR\employees_cnic.csv` (NATIONAL_ID, HIGH), `Medical` (HEALTH, HIGH), `Legal` (CRIMINAL, HIGH), `Customers` (CUSTOMER, MEDIUM) and `Biometrics` (BIOMETRIC, HIGH). Link each one to a processing activity, which you create in GDPR Records > Processing.

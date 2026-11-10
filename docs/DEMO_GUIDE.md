@@ -35,7 +35,7 @@ npm run dev
 ```
 Leave it running. It prints `Local: http://localhost:5173/`.
 
-**Agent: installed once as a Windows service.** It starts with Windows, so on demo day there is nothing to start.
+**Agent: installed once, runs in the background as SYSTEM.** It starts with Windows, so on demo day there is nothing to start.
 
 To install it the first time, or again after `undo_demo_machine.ps1`:
 1. In the console, open **Admin > Employees & Access** and click the key icon on Bilal's row (**Enrolment code**). Alternatively, give Bilal a portal login (person icon); he signs in, reads the notice and clicks **Get enrolment code**.
@@ -46,13 +46,13 @@ The setup window lists each Windows setting it switched on.
 
 **Rehearsal: watch every event in a window.** Use an *Administrator* PowerShell:
 ```powershell
-Stop-Service AuditraAgent
+& "C:\Program Files\Auditra\AuditraAgent.exe" stop
 cd E:\Auditra\agent
 python -m auditra_agent run
 ```
-Every event is printed as a `>` line. Press Ctrl+C to stop, then run `Start-Service AuditraAgent`.
+Every event is printed as a `>` line. Press Ctrl+C to stop, then run `& "C:\Program Files\Auditra\AuditraAgent.exe" start`.
 
-The service writes its log to `C:\ProgramData\Auditra\logs\agent.log`.
+The background agent writes its log to `C:\ProgramData\Auditra\logs\agent.log`.
 
 If the server is down, the agent keeps events in `C:\ProgramData\Auditra\outbox.db` and sends them when it comes back.
 

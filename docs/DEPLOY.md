@@ -2,7 +2,7 @@
 
 ```
 employee laptop                         Railway                         Vercel
-AuditraAgent service  --HTTPS-->  Django API + Postgres  <--HTTPS--  React console
+AuditraAgent (SYSTEM) --HTTPS-->  Django API + Postgres  <--HTTPS--  React console
 (outbox, every 3 s)               /api/agent/*, /api/live/           (polls /api/live/ every 2 s)
 ```
 
@@ -72,7 +72,7 @@ powershell -ExecutionPolicy Bypass -File agent\build.ps1 -Server https://auditra
    - enrols the laptop to that employee and links the signed-in Windows account;
    - turns on the audit policy, file auditing on the catalogue folders, the print log and a 256 MB Security log;
    - sets the Windows sign-in notice;
-   - installs the **Auditra Agent** service (automatic start, restarts on failure).
+   - registers the agent in Task Scheduler (runs as SYSTEM at boot, restarted if it stops).
 5. **Admin > Agents & Health** shows the laptop, its owner, and every Windows check. A red check names what is wrong and how to fix it.
 
 To issue a code without a portal login, use the key icon on the employee's row.

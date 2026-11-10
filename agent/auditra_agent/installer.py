@@ -6,7 +6,7 @@
 3. The code is checked with the server first. A wrong or expired code stops here and nothing is changed.
 4. The agent is copied to Program Files, its folder in ProgramData is locked to SYSTEM and Administrators,
    Windows auditing is switched on and the sign-in notice is set.
-5. The Auditra Agent service is installed (automatic start, restart on failure) and started.
+5. The agent is registered in Task Scheduler (runs as SYSTEM at boot, restarted if it stops) and started.
 
 Uninstall reverses every step and puts back the audit policy that was there before.
 """
@@ -17,11 +17,12 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 import winreg
 
 import requests
 
-from . import SERVICE_NAME, VERSION, service, winconfig
+from . import SERVICE_NAME, VERSION, task, winconfig
 from .collectors import console_account, is_admin
 from .log import log, setup
 from .outbox import Outbox
@@ -64,7 +65,7 @@ def enrol(server, code):
 
 def copy_self():
     if not frozen():
-        return None  # development: the service needs the built exe
+        return None  # development: the background task needs the built exe
     INSTALL_DIR.mkdir(parents=True, exist_ok=True)
     if os.path.normcase(os.path.abspath(sys.executable)) != os.path.normcase(str(INSTALLED_EXE)):
         shutil.copy2(sys.executable, INSTALLED_EXE)
@@ -94,7 +95,7 @@ def install(server, code, say):
         say(f'Windows account {linked["account"]} linked to {data["employee"]}.')
 
     say('Stopping a previous agent, if any ...')
-    service.stop()
+    stop_previous()
     exe = copy_self()
 
     say('Locking the agent folder to SYSTEM and Administrators ...')
@@ -127,17 +128,44 @@ def install(server, code, say):
     if exe is None:
         say('Development run: start the agent with  python -m auditra_agent run')
         return checks
-    say('Installing the Auditra Agent service ...')
-    service.install(exe)
+    say('Registering the background agent (Task Scheduler, runs as SYSTEM, starts with Windows) ...')
+    task.install(exe)
     add_to_apps_list()
-    service.start()
-    say('The Auditra Agent service is running and starts with Windows.')
+    task.start()
+    if wait_until_running():
+        say('The Auditra agent is running in the background and starts with Windows.')
+    else:
+        say('!!  The agent did not stay running. Run  AuditraAgent.exe status  in an Administrator '
+            'PowerShell and send the output to the administrator.')
+        checks['agent_running'] = winconfig.check(False, 'did not stay running')
     return checks
 
 
+def stop_previous():
+    """Stop the background agent and any copy still running from Program Files, so the exe can be replaced."""
+    task.stop()
+    task.remove_legacy_service()
+    subprocess.run(['powershell', '-NoProfile', '-Command',
+                    f"Get-Process AuditraAgent -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {os.getpid()} "
+                    f"-and $_.Path -eq '{INSTALLED_EXE}' }} | Stop-Process -Force"],
+                   capture_output=True, creationflags=NO_WINDOW)
+
+
+def wait_until_running(seconds=20):
+    """True if the agent starts and is still running a few seconds later (a crash on start shows here)."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline and not task.running():
+        time.sleep(1)
+    if not task.running():
+        return False
+    time.sleep(6)
+    return task.running()
+
+
 def uninstall(say):
-    say('Stopping and removing the service ...')
-    service.remove()
+    say('Stopping and removing the background agent ...')
+    task.remove()
+    stop_previous()
     if OUTBOX.exists():
         outbox = Outbox(OUTBOX)
         removed = [p for p in outbox.get('sacl_added', []) if winconfig.remove_sacl(p)]
