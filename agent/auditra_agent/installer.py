@@ -63,13 +63,23 @@ def enrol(server, code):
     return data
 
 
-def copy_self():
+def copy_self(seconds=20):
+    """Copy this exe to Program Files. The old agent may take a moment to exit, so keep closing it and retrying."""
     if not frozen():
         return None  # development: the background task needs the built exe
     INSTALL_DIR.mkdir(parents=True, exist_ok=True)
-    if os.path.normcase(os.path.abspath(sys.executable)) != os.path.normcase(str(INSTALLED_EXE)):
-        shutil.copy2(sys.executable, INSTALLED_EXE)
-    return INSTALLED_EXE
+    if os.path.normcase(os.path.abspath(sys.executable)) == os.path.normcase(str(INSTALLED_EXE)):
+        return INSTALLED_EXE
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            shutil.copy2(sys.executable, INSTALLED_EXE)
+            return INSTALLED_EXE
+        except OSError:
+            if time.monotonic() > deadline:
+                raise
+            stop_previous()
+            time.sleep(1)
 
 
 def add_to_apps_list():
@@ -94,15 +104,27 @@ def install(server, code, say):
     elif linked.get('account'):
         say(f'Windows account {linked["account"]} linked to {data["employee"]}.')
 
-    say('Stopping a previous agent, if any ...')
-    stop_previous()
-    exe = copy_self()
-
+    # The code is used now and the server issued a new token, so save it before anything else can fail; if a later
+    # step fails, the agent that was already installed restarts with the new token instead of being locked out.
     say('Locking the agent folder to SYSTEM and Administrators ...')
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     secure_data_dir()
     save_config({'server': server.rstrip('/'), 'token': data['token'], 'agent_id': data['agent_id'],
                  'employee': data['employee']})
+    try:
+        return _install_steps(data, say)
+    except Exception:
+        if task.installed():
+            task.start()
+            say('The agent that was already installed was restarted with the new enrolment.')
+        raise
+
+
+def _install_steps(data, say):
+    say('Stopping a previous agent, if any ...')
+    stop_previous()
+    exe = copy_self()
+
     outbox = Outbox(OUTBOX)
     outbox.put('server_config', data['config'])
 
@@ -145,9 +167,19 @@ def stop_previous():
     """Stop the background agent and any copy still running from Program Files, so the exe can be replaced."""
     task.stop()
     task.remove_legacy_service()
-    subprocess.run(['powershell', '-NoProfile', '-Command',
-                    f"Get-Process AuditraAgent -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {os.getpid()} "
-                    f"-and $_.Path -eq '{INSTALLED_EXE}' }} | Stop-Process -Force"],
+    # Task Scheduler's End stops only the one-file launcher; its child (the agent itself, the same exe) keeps
+    # running and keeps the file open. WMI sees SYSTEM's processes with their paths; this process and its own
+    # launcher are left alone (they run the exe being installed, or are the uninstaller).
+    script = (
+        f"$me = {os.getpid()}; "
+        "$parent = (Get-CimInstance Win32_Process -Filter \"ProcessId=$me\").ParentProcessId; "
+        "Get-CimInstance Win32_Process -Filter \"Name='AuditraAgent.exe'\" | "
+        f"Where-Object {{ $_.ProcessId -ne $me -and $_.ProcessId -ne $parent -and $_.ExecutablePath -eq '{INSTALLED_EXE}' }} | "
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+    )
+    subprocess.run(['powershell', '-NoProfile', '-Command', script], capture_output=True, creationflags=NO_WINDOW)
+    # The background agent always runs as SYSTEM and the installer never does, so this cannot stop the installer.
+    subprocess.run(['taskkill', '/F', '/IM', 'AuditraAgent.exe', '/FI', r'USERNAME eq NT AUTHORITY\SYSTEM'],
                    capture_output=True, creationflags=NO_WINDOW)
 
 
