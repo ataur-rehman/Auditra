@@ -3,6 +3,7 @@ import { HardDrive, Monitor, RotateCcw, ServerCog, ShieldOff, Trash2 } from 'luc
 import api, { errorText } from '../../lib/api'
 import { useLive } from '../../lib/live'
 import { ago, full } from '../../lib/format'
+import { DeviceStatePill, DownloadAgentButton } from '../../components/DeviceStatus'
 import { Button, Card, CardHeader, Empty, ErrorNote, Input, Modal, PageHeader, Pill, Stat } from '../../components/ui'
 
 const CHECK_LABELS = {
@@ -74,7 +75,8 @@ export default function Agents() {
   const c = health?.counts
   return (
     <>
-      <PageHeader title="Agents & system health" subtitle="Machines that send activity, what each collector is doing, and the background compliance job." />
+      <PageHeader title="Agents & system health" subtitle="Machines that send activity, what each collector is doing, and the background compliance job."
+        actions={<DownloadAgentButton url={health?.download_url} />} />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Events stored" value={c?.events} icon={HardDrive} />
         <Stat label="Incidents" value={c?.incidents} />
@@ -89,7 +91,7 @@ export default function Agents() {
           <div key={a.id} className="flex flex-wrap items-start gap-4 border-b border-line/70 px-4 py-3 last:border-0">
             <div className="min-w-48">
               <p className="flex items-center gap-2 font-medium">
-                <span className={`h-2 w-2 rounded-full ${a.online ? 'pulse-dot bg-ok' : 'bg-ink-3'}`} />{a.hostname}
+                {a.hostname}<DeviceStatePill device={a} />
               </p>
               <p className="mt-0.5 text-xs text-ink-3">{a.ip_address} · v{a.version} · last seen {ago(a.last_seen)}</p>
               <p className="mt-0.5 font-mono text-[11px] text-ink-3">user {a.console_user || '—'}</p>

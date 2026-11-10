@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { CheckCircle2, Download, KeyRound, Laptop, LogOut, Moon, ShieldCheck, Sun } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Download, KeyRound, Laptop, LogOut, Moon, ShieldCheck, Sun } from 'lucide-react'
 import api, { errorText } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { useTheme } from '../lib/theme'
-import { ago, full } from '../lib/format'
+import { full } from '../lib/format'
 import EventIcon from '../components/EventIcon'
+import { DeviceRow, DownloadAgentButton } from '../components/DeviceStatus'
 import { Button, Card, CardHeader, Empty, ErrorNote, Pill, Spinner, cx } from '../components/ui'
 
 const EVENT_LABELS = {
@@ -30,6 +31,41 @@ function Step({ number, done, title, children }) {
         </div>
       </div>
     </Card>
+  )
+}
+
+/** The first thing an employee sees: is monitoring set up on my laptop, and is it working? */
+function AgentBanner({ devices, downloadUrl, acknowledged }) {
+  const working = devices.filter((d) => d.state === 'working')
+  const attention = devices.filter((d) => d.state === 'attention')
+  let tone, icon, title, text
+  if (!devices.length) {
+    tone = 'border-accent/40 bg-accent/5'; icon = <Download size={18} className="text-accent" />
+    title = 'The Auditra agent is not installed yet'
+    text = acknowledged ? 'Download it below, run it on your work laptop and enter your enrolment code.'
+      : 'Read the monitoring notice, then download the agent and enrol your laptop.'
+  } else if (attention.length) {
+    tone = 'border-med/40 bg-med/5'; icon = <AlertTriangle size={18} className="text-med" />
+    title = `Installed on ${attention.map((d) => d.hostname).join(', ')}, but it needs attention`
+    text = attention.flatMap((d) => d.problems).join(' · ') + '. Your administrator sees this too.'
+  } else if (working.length) {
+    tone = 'border-ok/40 bg-ok/5'; icon = <CheckCircle2 size={18} className="text-ok" />
+    title = `Installed and working on ${working.map((d) => d.hostname).join(', ')}`
+    text = 'The agent is running and reporting to Auditra.'
+  } else {
+    tone = 'border-line bg-panel'; icon = <Laptop size={18} className="text-ink-3" />
+    title = `Installed on ${devices.map((d) => d.hostname).join(', ')}, currently offline`
+    text = 'The laptop is switched off or has no internet. Activity is kept on the laptop and sent when it is back.'
+  }
+  return (
+    <div className={cx('flex flex-wrap items-center gap-3 rounded-xl border px-5 py-4', tone)}>
+      {icon}
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold text-ink">{title}</p>
+        <p className="mt-0.5 text-xs text-ink-2">{text}</p>
+      </div>
+      {!devices.length && acknowledged && <DownloadAgentButton url={downloadUrl} variant="primary" />}
+    </div>
   )
 }
 
@@ -105,6 +141,8 @@ export default function EmployeePortal() {
         </div>
         <ErrorNote>{error}</ErrorNote>
 
+        <AgentBanner devices={devices} downloadUrl={data.download_url} acknowledged={data.acknowledged} />
+
         <Step number={1} done={data.acknowledged} title="Read the monitoring notice">
           <p>{notice.purpose}</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -138,9 +176,7 @@ export default function EmployeePortal() {
           <p>Run <span className="font-mono text-[13px]">AuditraAgent.exe</span> on your work laptop. Windows asks for administrator
             approval: Auditra needs it to switch on Windows auditing. If your account is not an administrator, ask IT to approve it.</p>
           <div className="mt-3">
-            <a href={data.download_url} className="inline-flex h-9 items-center gap-2 rounded-lg border border-line-2 bg-panel px-3.5 text-sm text-ink hover:bg-panel-2">
-              <Download size={15} />Download AuditraAgent.exe
-            </a>
+            <DownloadAgentButton url={data.download_url} variant={data.acknowledged && !enrolled ? 'primary' : 'secondary'} />
           </div>
         </Step>
 
@@ -160,14 +196,9 @@ export default function EmployeePortal() {
         </Step>
 
         <Card>
-          <CardHeader title="My devices" subtitle="Laptops enrolled to you. Online means the agent reported in the last 45 seconds." />
+          <CardHeader title="My devices" subtitle="Laptops enrolled to you. This page refreshes every 10 seconds." />
           {devices.length ? devices.map((d) => (
-            <div key={d.id} className="flex items-center gap-3 border-b border-line/70 px-5 py-3 text-sm last:border-0">
-              <Laptop size={16} className="text-ink-3" />
-              <span className="flex-1 font-medium">{d.hostname}</span>
-              <span className="text-xs text-ink-3">v{d.version} · enrolled {full(d.registered_at)}</span>
-              <Pill tone={d.online ? 'ok' : 'default'}>{d.online ? 'online' : `last seen ${ago(d.last_seen)}`}</Pill>
-            </div>
+            <div key={d.id} className="border-b border-line/70 px-5 py-3 last:border-0"><DeviceRow device={d} /></div>
           )) : <Empty icon={Laptop} title="No laptop enrolled yet">Follow the steps above.</Empty>}
         </Card>
 

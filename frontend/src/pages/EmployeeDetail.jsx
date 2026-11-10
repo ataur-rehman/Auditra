@@ -7,6 +7,7 @@ import { useLive } from '../lib/live'
 import { DAYS } from '../lib/format'
 import { useThemeColors } from '../lib/theme'
 import { EventRow, IncidentRow } from '../components/Feeds'
+import { DeviceRow } from '../components/DeviceStatus'
 import { Button, Card, CardHeader, Empty, PageHeader, Pill, Spinner, Stat } from '../components/ui'
 
 export default function EmployeeDetail() {
@@ -49,6 +50,8 @@ export default function EmployeeDetail() {
               <dd className="flex flex-wrap gap-1">{emp.allowed_categories.length ? emp.allowed_categories.map((c) => <Pill key={c} tone="ok">{c}</Pill>) : <span className="text-ink-3">General business data only</span>}</dd>
               <dt className="text-ink-3">Windows accounts</dt>
               <dd className="font-mono text-xs">{emp.accounts.length ? emp.accounts.map((a) => <p key={a.id}>{a.account}</p>) : <span className="font-sans text-ink-3">none linked</span>}</dd>
+              <dt className="text-ink-3">Laptops</dt>
+              <dd className="space-y-1.5">{emp.devices?.length ? emp.devices.map((d) => <DeviceRow key={d.id} device={d} compact />) : <span className="text-ink-3">agent not installed</span>}</dd>
             </dl>
           </Card>
           <Card>

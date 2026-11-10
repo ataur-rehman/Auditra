@@ -228,7 +228,9 @@ def unlinked_accounts(request):
 def health(request):
     jobs = ComplianceJobRun.objects.order_by('-started_at')[:10]
     return Response({
-        'agents': AgentSerializer(Agent.objects.annotate(event_count=Count('events')), many=True).data,
+        'agents': AgentSerializer(Agent.objects.select_related('employee').annotate(event_count=Count('events')),
+                                  many=True).data,
+        'download_url': settings.AGENT_DOWNLOAD_URL,
         'jobs': [{'started_at': j.started_at, 'status': j.status, 'incidents_created': j.incidents_created,
                   'error': j.error_message} for j in jobs],
         'counts': {

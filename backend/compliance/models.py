@@ -266,6 +266,36 @@ class Agent(models.Model):
     def online(self):
         return bool(self.last_seen) and timezone.now() - self.last_seen < timedelta(seconds=45)
 
+    CHECK_LABELS = {
+        'security_log': 'Security log cannot be read', 'audit_policy': 'Windows auditing is off',
+        'file_auditing': 'File auditing is missing', 'print_log': 'Print log is off',
+        'security_log_size': 'Security log is too small', 'sign_in_notice': 'Sign-in notice is not set',
+        'clock': 'Clock is out of sync', 'agent_running': 'Agent did not stay running',
+    }
+
+    @property
+    def problems(self):
+        """Plain-language reasons the agent is not fully working (empty when all is well)."""
+        found = []
+        if self.revoked:
+            found.append('Revoked by an administrator')
+        for name, check in (self.checks or {}).items():
+            if isinstance(check, dict) and not check.get('ok', True):
+                found.append(self.CHECK_LABELS.get(name, name.replace('_', ' ')))
+        for name, status in (self.collectors or {}).items():
+            if status != 'ok':
+                found.append(f'{name} collector: {status}')
+        if self.outbox > 50:
+            found.append(f'{self.outbox} events waiting to be sent')
+        return found
+
+    @property
+    def state(self):
+        """'working', 'attention' (online but something is wrong) or 'offline'."""
+        if self.revoked or not self.online:
+            return 'offline'
+        return 'attention' if self.problems else 'working'
+
     def __str__(self):
         return self.hostname
 

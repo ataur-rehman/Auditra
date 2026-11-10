@@ -5,6 +5,7 @@ import { useLive } from '../../lib/live'
 import { CATEGORIES, DAYS, EMPLOYEE_ROLES, ago, full } from '../../lib/format'
 import Crud from '../../components/Crud'
 import LinkAccountModal from '../../components/LinkAccount'
+import { DeviceRow, DownloadAgentButton } from '../../components/DeviceStatus'
 import { Button, Card, CardHeader, Empty, Modal, PageHeader, Pill } from '../../components/ui'
 
 const DAY_OPTIONS = Object.fromEntries(DAYS.map((d, i) => [i, d]))
@@ -37,11 +38,9 @@ function PortalCell({ row }) {
       {row.notice_acknowledged_at
         ? <Pill tone="ok">notice read · v{row.notice_version}</Pill>
         : <Pill tone="warn">notice not acknowledged</Pill>}
-      {row.devices.map((d) => (
-        <span key={d.id} className="inline-flex items-center gap-1 text-ink-2">
-          <span className={`h-1.5 w-1.5 rounded-full ${d.online ? 'bg-ok' : 'bg-ink-3'}`} />{d.hostname}
-        </span>
-      ))}
+      {row.devices.length
+        ? row.devices.map((d) => <DeviceRow key={d.id} device={d} compact />)
+        : <Pill tone="warn">agent not installed</Pill>}
     </div>
   )
 }
@@ -90,6 +89,8 @@ export default function AdminEmployees() {
   const [tick, setTick] = useState(0)
   const [linking, setLinking] = useState(null)
   const [secret, setSecret] = useState(null)
+  const [downloadUrl, setDownloadUrl] = useState('')
+  useEffect(() => { api.get('/admin/health/').then((r) => setDownloadUrl(r.data.download_url)).catch(() => {}) }, [])
 
   async function createLogin(row) {
     const reset = Boolean(row.login_username)
@@ -112,7 +113,8 @@ export default function AdminEmployees() {
 
   return (
     <>
-      <PageHeader title="Employees & access" subtitle="Who may see what, and when. These permissions are what the role-scope, category, shift and vendor rules check." />
+      <PageHeader title="Employees & access" subtitle="Who may see what, and when. These permissions are what the role-scope, category, shift and vendor rules check."
+        actions={<DownloadAgentButton url={downloadUrl} />} />
       <div className="space-y-4">
         <Crud title="Employee" icon={UserCog} path="/admin/employees/" deps={[tick]} onSaved={() => setTick((t) => t + 1)}
           defaults={{ role: 'STAFF', employment_type: 'STAFF', status: 'ACTIVE', shift_start: '09:00', shift_end: '18:00', work_days: [0, 1, 2, 3, 4], max_sensitivity: 'MEDIUM', allowed_categories: [] }}

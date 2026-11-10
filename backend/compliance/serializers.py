@@ -88,6 +88,16 @@ class EmployeeAccountSerializer(serializers.ModelSerializer):
         fields = ['id', 'account', 'created_at']
 
 
+def device_summary(agent):
+    """One laptop as the employee portal and the admin pages show it."""
+    last_event = agent.events.order_by('-occurred_at').values_list('occurred_at', flat=True).first()
+    return {
+        'id': str(agent.id), 'hostname': agent.hostname, 'state': agent.state, 'problems': agent.problems,
+        'online': agent.online, 'last_seen': agent.last_seen, 'last_event': last_event,
+        'registered_at': agent.registered_at, 'version': agent.version, 'console_user': agent.console_user,
+    }
+
+
 class EmployeeSerializer(serializers.ModelSerializer):
     accounts = EmployeeAccountSerializer(many=True, read_only=True)
     role_label = serializers.CharField(source='get_role_display', read_only=True)
@@ -111,8 +121,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
             return None
 
     def get_devices(self, obj):
-        return [{'id': str(a.id), 'hostname': a.hostname, 'online': a.online, 'last_seen': a.last_seen}
-                for a in obj.agents.all() if not a.revoked]
+        return [device_summary(a) for a in obj.agents.all() if not a.revoked]
 
     def validate_allowed_categories(self, value):
         unknown = set(value or []) - CATEGORY_CODES
@@ -255,11 +264,14 @@ class AgentSerializer(serializers.ModelSerializer):
     online = serializers.BooleanField(read_only=True)
     event_count = serializers.IntegerField(read_only=True, default=0)
     owner = serializers.SerializerMethodField()
+    state = serializers.CharField(read_only=True)
+    problems = serializers.ListField(read_only=True)
 
     class Meta:
         model = Agent
         fields = ['id', 'hostname', 'ip_address', 'version', 'is_admin', 'console_user', 'collectors', 'checks',
-                  'outbox', 'owner', 'revoked', 'registered_at', 'last_seen', 'online', 'event_count']
+                  'outbox', 'owner', 'revoked', 'registered_at', 'last_seen', 'online', 'event_count', 'state',
+                  'problems']
 
     def get_owner(self, obj):
         if not obj.employee_id:

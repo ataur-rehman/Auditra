@@ -15,6 +15,7 @@ from rest_framework.response import Response
 from .. import notice
 from ..models import DPORecord, EnrolmentCode, Event
 from ..permissions import IsEmployee
+from ..serializers import device_summary
 from .common import audit
 
 
@@ -32,11 +33,7 @@ def portal(request):
         Event.objects.filter(employee=employee, occurred_at__gte=week)
         .values('event_type').annotate(count=Count('id')).order_by('-count')
     )
-    devices = [
-        {'id': str(a.id), 'hostname': a.hostname, 'online': a.online, 'last_seen': a.last_seen,
-         'registered_at': a.registered_at, 'version': a.version}
-        for a in employee.agents.filter(revoked=False).order_by('hostname')
-    ]
+    devices = [device_summary(a) for a in employee.agents.filter(revoked=False).order_by('hostname')]
     return Response({
         'employee': {
             'full_name': employee.full_name, 'employee_code': employee.employee_code,

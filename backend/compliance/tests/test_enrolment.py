@@ -184,3 +184,33 @@ class ProductionSettingsTests(TestCase):
         result = self.run_settings(RAILWAY_ENVIRONMENT='production', RAILWAY_PUBLIC_DOMAIN='a.up.railway.app')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('SECRET_KEY', result.stderr)
+
+
+class DeviceStatusTests(TestCase):
+    def test_working_attention_and_offline(self):
+        build_org()
+        agent = Agent.objects.create(hostname='L1', token=Agent.new_token(), last_seen=timezone.now(),
+                                     collectors={'security': 'ok'}, checks={'audit_policy': {'ok': True}})
+        self.assertEqual((agent.state, agent.problems), ('working', []))
+        agent.checks = {'audit_policy': {'ok': False, 'detail': 'x'}}
+        self.assertEqual(agent.state, 'attention')
+        self.assertEqual(agent.problems, ['Windows auditing is off'])
+        agent.last_seen = timezone.now() - timedelta(minutes=5)
+        self.assertEqual(agent.state, 'offline')
+
+    def test_portal_and_admin_show_the_device_state(self):
+        org = build_org()
+        Agent.objects.create(hostname='L1', token=Agent.new_token(), last_seen=timezone.now(), employee=org['bilal'],
+                             checks={'file_auditing': {'ok': False}})
+        user = AuditraUser.objects.create_user('bilal', password='x' * 12, role='employee', employee=org['bilal'])
+        admin = AuditraUser.objects.create_user('boss', password='x' * 12, role='admin')
+        portal, console = APIClient(), APIClient()
+        portal.force_authenticate(user)
+        console.force_authenticate(admin)
+        device = portal.get('/api/me/portal/').data['devices'][0]
+        self.assertEqual((device['state'], device['problems']), ('attention', ['File auditing is missing']))
+        row = next(e for e in console.get('/api/admin/employees/').data if e['full_name'] == 'Bilal Ahmed')
+        self.assertEqual(row['devices'][0]['state'], 'attention')
+        health = console.get('/api/admin/health/').data
+        self.assertIn('download_url', health)
+        self.assertEqual(health['agents'][0]['state'], 'attention')
