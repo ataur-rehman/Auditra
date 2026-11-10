@@ -14,11 +14,15 @@ If the API cannot be reached, the agent keeps events in its outbox and sends the
 
 ## 1. Railway: API and database
 
-1. Create a project, add **PostgreSQL**, then add a service from this GitHub repository.
-2. In the service settings, set **Root Directory** to `backend`. `backend/railway.json` sets the rest:
-   - start command: migrate, collectstatic, then gunicorn;
-   - health check: `/api/health/`;
-   - restart on failure.
+1. Create a project, add **PostgreSQL**, then add an empty service, for example `auditra-api`. With the CLI:
+   ```bash
+   railway init --name auditra
+   railway add --database postgres
+   railway add --service auditra-api
+   ```
+2. Deploy the `backend` folder: run `railway up --service auditra-api` from inside `backend`. Alternatively, connect the GitHub repository with **Root Directory** `backend`.
+
+   `backend/railpack.json` sets the start command: migrate, create the first logins, collectstatic, then gunicorn. Railway's builder reads it directly. (`railway.json` Config as Code is deprecated and is not read by new projects.)
 
    Gunicorn runs **one worker with 8 threads**, so the minute-by-minute compliance job runs once. Do not raise the number of workers.
 3. **Variables** on the API service:
@@ -41,12 +45,15 @@ If the API cannot be reached, the agent keeps events in its outbox and sends the
 5. The start command also runs `create_default_users`. On the first deploy it creates `admin` and `compliance_officer` from `ADMIN_PASSWORD` and `OFFICER_PASSWORD`; afterwards it does nothing.
    - If those passwords are missing, the first deploy stops with a clear message.
    - Change the passwords later under Admin > Console Users. The variables are only read the first time.
+   - Lost the admin password? Set `RESET_DEFAULT_PASSWORDS=true`, let it deploy, sign in, then delete the variable.
+   - When setting variables from a script on Windows, strip `\r` from the values: a trailing carriage return becomes part of the secret.
 
 ## 2. Vercel: console
 
 1. Import the repository and set **Root Directory** to `frontend`. Vite is detected. `frontend/vercel.json` sends every route to `index.html`, so reloading `/incidents/...` works.
 2. Environment variable: `VITE_API_URL` = `https://auditra-api.up.railway.app/api`. It is read at build time, so redeploy after changing it.
-3. Put the Vercel URL in Railway's `CORS_ALLOWED_ORIGINS`.
+3. Put the Vercel production URL in Railway's `CORS_ALLOWED_ORIGINS`.
+4. **Settings > Deployment Protection**: turn **Vercel Authentication** off. New Vercel projects have it on, which puts a Vercel sign-in in front of the console; officers and employees sign in to Auditra itself.
 
 ## 3. The agent installer
 
