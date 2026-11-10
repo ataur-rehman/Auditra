@@ -1,6 +1,8 @@
 """Administration: users, employees and accounts, catalogue, rules, agents, audit trail, reset."""
+import secrets
 from datetime import timedelta
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, Max
 from django.utils import timezone
@@ -11,7 +13,7 @@ from rest_framework.response import Response
 from ..incidents import ORG_LEVEL_CODES
 from ..models import (
     Agent, AiDayScore, AuditEntry, AuditraUser, BreachRecord, CatalogueEntry, ComplianceJobRun, Employee,
-    EmployeeAccount, Event, Incident, NotificationLog, Rule, normalize_account,
+    EmployeeAccount, EnrolmentCode, Event, Incident, NotificationLog, Rule, normalize_account,
 )
 from ..permissions import IsAdminOrComplianceOfficer, IsAdminUser
 from ..serializers import (
@@ -38,7 +40,7 @@ class EmployeeViewSet(AuditedModelMixin, viewsets.ModelViewSet):
     permission_classes = [IsAdminUser]
     audit_label = 'employee'
     serializer_class = EmployeeSerializer
-    queryset = Employee.objects.prefetch_related('accounts')
+    queryset = Employee.objects.select_related('login').prefetch_related('accounts', 'agents')
 
     def perform_update(self, serializer):
         super().perform_update(serializer)
@@ -50,14 +52,45 @@ class EmployeeViewSet(AuditedModelMixin, viewsets.ModelViewSet):
         account = normalize_account(request.data.get('account'))
         if not account:
             return Response({'error': 'account is required, e.g. MACBOOK\\bilal'}, status=status.HTTP_400_BAD_REQUEST)
-        existing = EmployeeAccount.objects.filter(account=account).select_related('employee').first()
-        if existing and existing.employee_id != employee.id:
-            return Response({'error': f'{account} already belongs to {existing.employee.full_name}.'},
-                            status=status.HTTP_400_BAD_REQUEST)
-        link, _ = EmployeeAccount.objects.get_or_create(account=account, defaults={'employee': employee})
-        result = _reassign(account, employee)
+        try:
+            link, result = link_account(account, employee)
+        except AccountTaken as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         audit(request, 'employee.account_link', account, employee=employee.full_name, **result)
         return Response({**EmployeeAccountSerializer(link).data, **result}, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='login')
+    def create_login(self, request, pk=None):
+        """Create (or reset the password of) the employee's own console login. The password is shown once."""
+        employee = self.get_object()
+        password = secrets.token_urlsafe(9)
+        user = AuditraUser.objects.filter(employee=employee).first()
+        created = user is None
+        if created:
+            username = str(request.data.get('username') or employee.employee_code or '').strip().lower()
+            if not username:
+                return Response({'error': 'username is required.'}, status=status.HTTP_400_BAD_REQUEST)
+            if AuditraUser.objects.filter(username__iexact=username).exists():
+                return Response({'error': f'The username {username} is already taken.'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            first, _, last = employee.full_name.partition(' ')
+            user = AuditraUser(username=username, role='employee', employee=employee, email=employee.email,
+                               first_name=first[:150], last_name=last[:150])
+        user.set_password(password)
+        user.is_active = True
+        user.save()
+        audit(request, 'employee.login_create' if created else 'employee.login_reset', user.username,
+              employee=employee.full_name)
+        return Response({'username': user.username, 'password': password, 'created': created},
+                        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='enrolment-code')
+    def enrolment_code(self, request, pk=None):
+        """An admin issues a one-time code for an employee's laptop (for employees without a console login)."""
+        employee = self.get_object()
+        record, code = EnrolmentCode.issue(employee, request.user, settings.ENROLMENT_CODE_MINUTES)
+        audit(request, 'employee.enrolment_code', employee.full_name, expires_at=record.expires_at.isoformat())
+        return Response({'code': code, 'expires_at': record.expires_at}, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['delete'], url_path=r'accounts/(?P<account_id>[^/.]+)')
     def remove_account(self, request, pk=None, account_id=None):
@@ -70,6 +103,20 @@ class EmployeeViewSet(AuditedModelMixin, viewsets.ModelViewSet):
         result = _reassign(account, None)
         audit(request, 'employee.account_unlink', account, employee=employee.full_name, **result)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AccountTaken(ValueError):
+    pass
+
+
+def link_account(account, employee):
+    """Link a Windows account to an employee and move its recent activity to them. Raises AccountTaken."""
+    account = normalize_account(account)
+    existing = EmployeeAccount.objects.filter(account=account).select_related('employee').first()
+    if existing and existing.employee_id != employee.id:
+        raise AccountTaken(f'{account} already belongs to {existing.employee.full_name}.')
+    link, _ = EmployeeAccount.objects.get_or_create(account=account, defaults={'employee': employee})
+    return link, _reassign(account, employee)
 
 
 def _account_events(account):

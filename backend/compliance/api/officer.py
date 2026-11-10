@@ -287,7 +287,7 @@ class EmployeeDirectoryViewSet(viewsets.ReadOnlyModelViewSet):
 
     permission_classes = [IsAdminOrComplianceOfficer]
     serializer_class = EmployeeSerializer
-    queryset = Employee.objects.prefetch_related('accounts')
+    queryset = Employee.objects.select_related('login').prefetch_related('accounts', 'agents')
 
     def list(self, request, *args, **kwargs):
         return Response(employee_risk_rows())

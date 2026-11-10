@@ -91,14 +91,28 @@ class EmployeeAccountSerializer(serializers.ModelSerializer):
 class EmployeeSerializer(serializers.ModelSerializer):
     accounts = EmployeeAccountSerializer(many=True, read_only=True)
     role_label = serializers.CharField(source='get_role_display', read_only=True)
+    login_username = serializers.SerializerMethodField()
+    devices = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
         fields = [
             'id', 'full_name', 'employee_code', 'email', 'department', 'role', 'role_label', 'employment_type',
             'status', 'shift_start', 'shift_end', 'work_days', 'max_sensitivity', 'allowed_categories',
-            'left_at', 'accounts', 'created_at',
+            'left_at', 'accounts', 'created_at', 'login_username', 'devices', 'notice_version',
+            'notice_acknowledged_at',
         ]
+        read_only_fields = ['notice_version', 'notice_acknowledged_at']
+
+    def get_login_username(self, obj):
+        try:
+            return obj.login.username
+        except AuditraUser.DoesNotExist:
+            return None
+
+    def get_devices(self, obj):
+        return [{'id': str(a.id), 'hostname': a.hostname, 'online': a.online, 'last_seen': a.last_seen}
+                for a in obj.agents.all() if not a.revoked]
 
     def validate_allowed_categories(self, value):
         unknown = set(value or []) - CATEGORY_CODES
@@ -240,11 +254,17 @@ class RuleSerializer(serializers.ModelSerializer):
 class AgentSerializer(serializers.ModelSerializer):
     online = serializers.BooleanField(read_only=True)
     event_count = serializers.IntegerField(read_only=True, default=0)
+    owner = serializers.SerializerMethodField()
 
     class Meta:
         model = Agent
-        fields = ['id', 'hostname', 'ip_address', 'version', 'is_admin', 'console_user', 'collectors', 'revoked',
-                  'registered_at', 'last_seen', 'online', 'event_count']
+        fields = ['id', 'hostname', 'ip_address', 'version', 'is_admin', 'console_user', 'collectors', 'checks',
+                  'outbox', 'owner', 'revoked', 'registered_at', 'last_seen', 'online', 'event_count']
+
+    def get_owner(self, obj):
+        if not obj.employee_id:
+            return None
+        return {'id': str(obj.employee_id), 'full_name': obj.employee.full_name}
 
 
 class UserSerializer(serializers.ModelSerializer):
