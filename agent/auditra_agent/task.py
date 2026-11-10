@@ -123,7 +123,8 @@ def start():
 
 def stop():
     if installed():
-        _schtasks('/End', '/TN', TASK_NAME)
+        return _schtasks('/End', '/TN', TASK_NAME)[0] == 0
+    return False
 
 
 def remove():

@@ -23,9 +23,11 @@ import threading
 def attach_console():
     """The exe is built without a console window (double-click shows only the setup window). Commands that print
     open one, or reuse the PowerShell window they were started from."""
+    # Always a window of its own: PowerShell does not wait for a windowless exe, so sharing its console would mix
+    # the agent's lines with the prompt.
     kernel32 = ctypes.windll.kernel32
-    if not kernel32.AttachConsole(-1):
-        kernel32.AllocConsole()
+    kernel32.AllocConsole()
+    kernel32.SetConsoleTitleW('Auditra Agent')
     sys.stdout = open('CONOUT$', 'w', encoding='utf-8', buffering=1)
     sys.stderr = sys.stdout
 
@@ -64,29 +66,41 @@ def run_agent(console):
         crash.close()
 
 
-def status():
+def status_text():
     from . import task
     from .outbox import Outbox
     from .paths import CONFIG, LOG_DIR, OUTBOX, load_config
 
-    config = load_config() if CONFIG.exists() else {}
+    try:
+        config = load_config() if CONFIG.exists() else {}
+    except PermissionError:
+        return 'Run this from a PowerShell opened with "Run as administrator": the agent folder is locked to admins.'
     state = 'running' if task.running() else 'installed, not running' if task.installed() else 'not installed'
-    print(f'Agent     : {state}')
-    print(f'Server    : {config.get("server", "-")}')
-    print(f'Enrolled  : {config.get("employee") or ("yes" if config.get("token") else "no")}')
+    out = [f'Agent     : {state}', f'Server    : {config.get("server", "-")}',
+           f'Enrolled  : {config.get("employee") or ("yes" if config.get("token") else "no")}']
     if OUTBOX.exists():
         outbox = Outbox(OUTBOX)
-        print(f'Waiting   : {outbox.pending()} event(s) not yet sent')
+        out.append(f'Waiting   : {outbox.pending()} event(s) not yet sent')
         outbox.close()
-    for name in ('agent.log', 'crash.log'):
+    for name, count in (('agent.log', 12), ('crash.log', 20)):
         path = LOG_DIR / name
         try:
-            lines = path.read_text(encoding='utf-8', errors='replace').splitlines()[-15:]
+            lines = path.read_text(encoding='utf-8', errors='replace').splitlines()[-count:]
         except OSError:
             continue
         if lines:
-            print(f'\n--- {path} (last {len(lines)} lines) ---')
-            print('\n'.join(lines))
+            out += ['', f'--- {path} (last {len(lines)} lines) ---', *lines]
+    return '\n'.join(out)
+
+
+def status():
+    text = status_text()
+    if getattr(sys, 'frozen', False):
+        # The exe has no console of its own and PowerShell does not wait for it, so show a window instead
+        # (Ctrl+C in the window copies its text).
+        ctypes.windll.user32.MessageBoxW(None, text, 'Auditra Agent status', 0x40)
+    else:
+        print(text)
 
 
 def main(argv=None):
@@ -103,21 +117,26 @@ def main(argv=None):
         from .installer import run_uninstall
         run_uninstall()
         return
+    if command == 'status':
+        status()
+        return
+    if command in ('stop', 'start'):
+        from . import task
+        ok = task.stop() if command == 'stop' else task.start()
+        text = (f'Background agent {"stopped" if command == "stop" else "started"}.' if ok is not False else
+                'Task Scheduler refused. Run this from a PowerShell opened with "Run as administrator".')
+        if getattr(sys, 'frozen', False):
+            ctypes.windll.user32.MessageBoxW(None, text, 'Auditra Agent', 0x40)
+        else:
+            print(text)
+        return
     if getattr(sys, 'frozen', False):
         attach_console()
     if command == 'run':
         run_agent(console=True)
-    elif command in ('stop', 'start'):
-        from . import task
-        if command == 'stop':
-            task.stop()
-        else:
-            task.start()
-        print(f'Background agent {"stopped" if command == "stop" else "started"}.')
-    elif command == 'status':
-        status()
     else:
         print(__doc__)
+        input('Press Enter to close.')
 
 
 if __name__ == '__main__':

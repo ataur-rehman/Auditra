@@ -302,8 +302,9 @@ class SecurityCollector:
             return event
         if event_id == 4698:
             task = f.get('TaskName') or ''
-            # Windows makes these itself (\Microsoft\..., \SoftLanding\<SID>\...); only user-made tasks matter.
-            if task.lower().startswith(('\\microsoft\\', '\\softlanding\\')):
+            # Windows makes these itself (\Microsoft\..., \SoftLanding\<SID>\...), and \Auditra\ is this agent's own
+            # task (registered by the installer); only user-made tasks matter.
+            if task.lower().startswith(('\\microsoft\\', '\\softlanding\\', '\\auditra\\')):
                 return None
             event = self.base(root, 'TASK_CREATED', actor, event_id)
             event['details'] = {'task_name': task}
