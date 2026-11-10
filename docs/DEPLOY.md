@@ -35,7 +35,7 @@ If the API cannot be reached, the agent keeps events in its outbox and sends the
    | `CORS_ALLOWED_ORIGINS` | `https://<your-app>.vercel.app` |
    | `ADMIN_PASSWORD`, `OFFICER_PASSWORD` | the first passwords for `admin` and `compliance_officer` |
    | `TIME_ZONE` | `Asia/Karachi` (default) |
-   | `AGENT_DOWNLOAD_URL` | optional: where the portal's download button points (default: the latest GitHub release) |
+   | `AGENT_DOWNLOAD_URL` | where the portal's and admin pages' download button points: a direct download link to `AuditraAgent.exe` |
 
    Some values are set without you:
    - Railway sets `RAILWAY_ENVIRONMENT` and `RAILWAY_PUBLIC_DOMAIN`. With them, `DEBUG` is off and the public domain is allowed automatically.
@@ -63,7 +63,9 @@ powershell -ExecutionPolicy Bypass -File agent\build.ps1 -Server https://auditra
 ```
 - This builds `agent\dist\AuditraAgent.exe`.
 - `-Server` is only the pre-filled address; no secret is built into the exe.
-- `-Release` uploads the exe to the latest GitHub release, which is where the portal's download button points. It needs `gh` and an existing release, for example `gh release create agent-v3.0 --title "Auditra agent 3.0" --notes "Windows agent"`.
+- Host the exe where anyone can download it without signing in, and set `AGENT_DOWNLOAD_URL` on Railway to the direct link.
+- With Google Drive, share the file as "Anyone with the link". Do not use the `/view` link: use `https://drive.usercontent.google.com/download?id=<file id>&export=download&confirm=t`. The ordinary `uc?export=download` link stops at Drive's "can't scan this file for viruses" page.
+- Replacing the file on Drive with **Manage versions** keeps the same id, so the link keeps working.
 
 ## 4. Onboarding an employee
 

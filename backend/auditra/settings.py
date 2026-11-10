@@ -205,7 +205,8 @@ AGENT_INTERVAL_SECONDS = int(os.getenv('AGENT_INTERVAL_SECONDS', '3'))
 AGENT_INVENTORY_MINUTES = int(os.getenv('AGENT_INVENTORY_MINUTES', '10'))
 ENROLMENT_CODE_MINUTES = int(os.getenv('ENROLMENT_CODE_MINUTES', '30'))
 AGENT_DOWNLOAD_URL = os.getenv(
-    'AGENT_DOWNLOAD_URL', 'https://github.com/ataur-rehman/Auditra/releases/latest/download/AuditraAgent.exe'
+    'AGENT_DOWNLOAD_URL',
+    'https://drive.usercontent.google.com/download?id=1KYaf45kiF2pTlMb65h-SZrVNDEtWD4BG&export=download&confirm=t'
 )
 MONITORING_NOTICE_VERSION = os.getenv('MONITORING_NOTICE_VERSION', '1')
 
