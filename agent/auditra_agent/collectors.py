@@ -32,6 +32,7 @@ from urllib.parse import urlparse
 try:
     import win32api
     import win32evtlog
+    import win32net
     import win32file
     import win32security
     import win32ts
@@ -162,6 +163,65 @@ def sid_to_name(sid_text):
         return sid_text
 
 
+ONLINE_ID_DOMAINS = {'microsoftaccount'}
+NULL_SID = 'S-1-0-0'
+
+
+class _USER_INFO_24(ctypes.Structure):
+    _fields_ = [('internet_identity', ctypes.c_int), ('flags', ctypes.c_ulong), ('provider', ctypes.c_wchar_p),
+                ('principal', ctypes.c_wchar_p), ('sid', ctypes.c_void_p)]
+
+
+def online_identities():
+    """{'name@outlook.com': 'MACHINE\\\\localname'} for local accounts connected to a Microsoft account."""
+    netapi = ctypes.WinDLL('netapi32')
+    found = {}
+    try:
+        users, _, _ = win32net.NetUserEnum(None, 0)
+    except Exception:
+        return found
+    for user in users:
+        buf = ctypes.c_void_p()
+        if netapi.NetUserGetInfo(None, user['name'], 24, ctypes.byref(buf)) != 0:
+            continue
+        try:
+            info = ctypes.cast(buf, ctypes.POINTER(_USER_INFO_24)).contents
+            if info.internet_identity and info.principal:
+                found[info.principal.lower()] = account_of(MACHINE, user['name'])
+        finally:
+            netapi.NetApiBufferFree(buf)
+    return found
+
+
+class AccountResolver:
+    """One name per person. A Microsoft-account sign-in is logged as MicrosoftAccount\\\\name@outlook.com, but the same
+    person's file access, lock and console session are logged as MACHINE\\\\localname. Logons are reported under the
+    local name so every event of that person links to the same employee."""
+
+    def __init__(self, lookup=None, resolve_sid=None):
+        self.lookup = lookup or online_identities
+        self.resolve_sid = resolve_sid or sid_to_name
+        self.cache = {}
+        self.refreshed = 0.0
+
+    def account(self, domain, user, sid=None):
+        if (domain or '').strip().lower() not in ONLINE_ID_DOMAINS:
+            return account_of(domain, user)
+        key = (user or '').strip().lower()
+        if sid and sid != NULL_SID:
+            name = self.resolve_sid(sid)
+            if '\\' in name and not name.upper().startswith('S-1-'):
+                self.cache[key] = name
+                return name
+        if key not in self.cache and time.monotonic() - self.refreshed > 30:
+            self.refreshed = time.monotonic()
+            try:
+                self.cache.update(self.lookup())
+            except Exception:
+                pass
+        return self.cache.get(key) or account_of(domain, user)
+
+
 def under_any(path, prefixes):
     p = (path or '').replace('/', '\\').rstrip('\\').lower()
     return any(p == pre or p.startswith(pre + '\\') for pre in prefixes)
@@ -214,6 +274,7 @@ class SecurityCollector:
     def __init__(self, agent):
         self.agent = agent
         self.dedupe = Deduper()
+        self.accounts = AccountResolver()
 
     def collect(self):
         out = []
@@ -256,7 +317,7 @@ class SecurityCollector:
                     return None
             else:
                 event_type = 'LOGON_FAILED'
-            event = self.base(root, event_type, account_of(domain, user), event_id)
+            event = self.base(root, event_type, self.accounts.account(domain, user, f.get('TargetUserSid')), event_id)
             event['logon_type'] = logon_type
             ip = f.get('IpAddress')
             if ip and ip not in ('-', '::1', '127.0.0.1'):
@@ -269,7 +330,7 @@ class SecurityCollector:
             user, domain = f.get('TargetUserName'), f.get('TargetDomainName')
             if ignored_account(domain, user):
                 return None
-            return self.base(root, 'LOCK', account_of(domain, user), event_id)
+            return self.base(root, 'LOCK', self.accounts.account(domain, user, f.get('TargetUserSid')), event_id)
 
         if event_id == 4663:
             return self.parse_file_access(root, f)

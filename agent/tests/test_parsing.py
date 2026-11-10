@@ -32,3 +32,27 @@ class AgentParsingTests(unittest.TestCase):
     def test_friendly_device(self):
         self.assertEqual(agent.friendly_device(r'USBSTOR\Disk&Ven_SanDisk&Prod_Cruzer_Blade&Rev_1.00\4C53'),
                          'SanDisk Cruzer Blade')
+
+
+@unittest.skipIf(agent is None, 'agent needs pywin32')
+class AccountResolverTests(unittest.TestCase):
+    LOCAL = r'CRAZY\ataur'
+
+    def test_microsoft_account_logon_uses_the_local_name_from_its_sid(self):
+        resolver = agent.AccountResolver(lookup=lambda: {}, resolve_sid=lambda sid: self.LOCAL)
+        self.assertEqual(resolver.account('MicrosoftAccount', 'ali@outlook.com', 'S-1-5-21-1-2-3-1001'), self.LOCAL)
+
+    def test_failed_logon_without_a_sid_uses_the_local_account_list(self):
+        resolver = agent.AccountResolver(lookup=lambda: {'ali@outlook.com': self.LOCAL}, resolve_sid=lambda sid: sid)
+        self.assertEqual(resolver.account('MicrosoftAccount', 'Ali@Outlook.com', 'S-1-0-0'), self.LOCAL)
+
+    def test_local_and_domain_accounts_are_unchanged(self):
+        resolver = agent.AccountResolver(lookup=lambda: {}, resolve_sid=lambda sid: r'X\y')
+        self.assertEqual(resolver.account('CRAZY', 'bilal', 'S-1-5-21-1'), r'CRAZY\bilal')
+
+    def test_unknown_microsoft_account_is_kept_as_is(self):
+        resolver = agent.AccountResolver(lookup=lambda: {}, resolve_sid=lambda sid: sid)
+        self.assertEqual(resolver.account('MicrosoftAccount', 'x@live.com', 'S-1-0-0'), r'MicrosoftAccount\x@live.com')
+
+    def test_real_lookup_runs(self):
+        self.assertIsInstance(agent.online_identities(), dict)
