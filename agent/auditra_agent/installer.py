@@ -240,7 +240,8 @@ def install_window():
         'Get the enrolment code from the Auditra console: sign in, read the monitoring notice, then choose '
         '"Get enrolment code".')).grid(column=0, row=1, columnspan=2, sticky='w', pady=(4, 12))
     ttk.Label(frame, text='Server').grid(column=0, row=2, sticky='w')
-    server_var = tk.StringVar(value=current.get('server') or defaults.get('server') or 'http://127.0.0.1:8000')
+    # The address built into this exe wins: a new build for a new server must not inherit an older install's.
+    server_var = tk.StringVar(value=defaults.get('server') or current.get('server') or 'http://127.0.0.1:8000')
     ttk.Entry(frame, textvariable=server_var, width=46).grid(column=1, row=2, sticky='w', pady=2)
     ttk.Label(frame, text='Enrolment code').grid(column=0, row=3, sticky='w')
     code_var = tk.StringVar()
