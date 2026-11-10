@@ -18,21 +18,33 @@ import Rules from './pages/admin/Rules'
 import Agents from './pages/admin/Agents'
 import Users from './pages/admin/Users'
 import Audit from './pages/admin/Audit'
+import EmployeePortal from './pages/EmployeePortal'
 
 function Protected({ children, admin }) {
-  const { user, ready, isAdmin } = useAuth()
+  const { user, ready, isAdmin, isEmployee } = useAuth()
   if (!ready) return <Spinner label="Starting console" />
   if (!user) return <Navigate to="/login" replace />
+  // Employees only have their own portal; the monitoring console is for officers and admins.
+  if (isEmployee) return <Navigate to="/me" replace />
   if (admin && !isAdmin) return <Navigate to="/" replace />
   return children
 }
 
+function EmployeeOnly({ children }) {
+  const { user, ready, isEmployee } = useAuth()
+  if (!ready) return <Spinner label="Starting" />
+  if (!user) return <Navigate to="/login" replace />
+  if (!isEmployee) return <Navigate to="/" replace />
+  return children
+}
+
 export default function App() {
-  const { user } = useAuth()
+  const { user, isEmployee } = useAuth()
   return (
-    <LiveProvider enabled={Boolean(user)}>
+    <LiveProvider enabled={Boolean(user) && !isEmployee}>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/me" element={<EmployeeOnly><EmployeePortal /></EmployeeOnly>} />
         <Route element={<Protected><Layout /></Protected>}>
           <Route index element={<Overview />} />
           <Route path="incidents" element={<Incidents />} />

@@ -10,9 +10,9 @@ Detection scope is the team's workbook `Auditra_GDPR_Violation_Mapping.xlsx`: 22
 
 | Part | Where | What it does |
 |---|---|---|
-| Agent | `backend/compliance/agent.py` | Reads the Security, Plug and Play and PrintService logs, plus copies to USB drives, visits to watched sites in Chrome and Edge, and file ages. It sends only structured events. |
+| Agent | `agent/` | A background agent (`AuditraAgent.exe`, run by Task Scheduler as SYSTEM). Reads the Security, Plug and Play and PrintService logs, plus copies to USB drives, visits to watched sites in Chrome and Edge, and file ages. It sends only structured events, keeps them in a local outbox while the server is unreachable, and switches on the Windows auditing it needs itself. |
 | API | `backend/` (Django + DRF, Postgres) | Ingest, rules (`compliance/detection/`), score (`scoring.py`), AI (`ai.py`), and the officer and admin API |
-| Console | `frontend/` (React, Vite, Tailwind) | Officer and admin views with a live feed, polled every 2 s. Light and dark themes. |
+| Console | `frontend/` (React, Vite, Tailwind) | Officer and admin views with a live feed, polled every 2 s, and an employee portal for the monitoring notice and laptop enrolment. Light and dark themes. |
 | ML research | `ml_pipeline_cert/` | The CERT r4.2 pipeline: 4 models evaluated, OCSVM exported. Its baselines feed `ai.py`. |
 
 ## First-time setup (server laptop)
@@ -28,6 +28,8 @@ npm install
 ```
 
 The login accounts come from `create_default_users`. Change their passwords under Admin > Console Users.
+
+To host it on Railway (API and Postgres) and Vercel (console), and to install the agent on employee laptops, follow [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Demo day: two laptops
 
@@ -47,11 +49,12 @@ The login accounts come from `create_default_users`. Change their passwords unde
    cd backend;  python manage.py runserver 0.0.0.0:8000
    cd frontend; npm run dev
    ```
-3. **Laptop B, start the agent** in an *Administrator* PowerShell and leave it open:
-   ```powershell
-   cd backend; python -m compliance.agent
-   ```
-   For a rehearsal, set `$env:AUDITRA_VERBOSE="1"` first: the window then prints every structured event before sending it.
+3. **Laptop B, install the agent once.**
+   1. Build it: `powershell -ExecutionPolicy Bypass -File agent\build.ps1 -Server http://<laptop-B-ip>:8000`.
+   2. In the console, open **Admin > Employees & Access** and click the key icon on Bilal's row to get an enrolment code.
+   3. Double-click `agent\dist\AuditraAgent.exe`, approve the administrator prompt and type the code.
+
+   It registers the agent in Task Scheduler as SYSTEM, so it starts with Windows. For a rehearsal that prints every event, run `"C:\Program Files\Auditra\AuditraAgent.exe" stop`, then `cd agent; python -m auditra_agent run` in an Administrator PowerShell.
 4. **Laptop A:** open `http://<laptop-B-ip>:5173` and sign in.
 5. **Configure the organisation live, as admin.** This is real configuration, not seed data.
    - **Data Catalogue:** add `C:\AuditraCompany\Finance` (FINANCIAL, MEDIUM), `Payroll` (FINANCIAL, HIGH), `HR` (HR_EMPLOYEE, HIGH), `HR\employees_cnic.csv` (NATIONAL_ID, HIGH), `Medical` (HEALTH, HIGH), `Legal` (CRIMINAL, HIGH), `Customers` (CUSTOMER, MEDIUM) and `Biometrics` (BIOMETRIC, HIGH). Link each one to a processing activity, which you create in GDPR Records > Processing.
@@ -112,12 +115,16 @@ $env:DB_ENGINE="sqlite"; $env:DB_NAME=":memory:"; $env:AUDITRA_SCHEDULER="off"
 python manage.py test compliance
 ```
 
-45 tests replay the exact agent payloads for every rule:
+The backend tests replay the exact agent payloads for every rule:
 - a clean baseline with no false positives
 - AI monotonicity
 - the agent token flow
 - officer actions and permissions
 - the PDF report
+- employee logins, the monitoring notice and code enrolment
+- the production settings guard
+
+The agent's own tests (outbox, parsing) run with `cd agent; python -m unittest discover -s tests -t .`.
 
 ## Useful commands
 

@@ -1,4 +1,5 @@
 import os
+import warnings
 from datetime import timedelta
 from pathlib import Path
 
@@ -16,8 +17,10 @@ def _load_env_file(path):
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-_load_env_file(BASE_DIR.parent / '.env')
-_load_env_file(BASE_DIR / '.env')
+# Local .env files are for the laptop setup only; on Railway every value comes from the service variables.
+if not os.getenv('RAILWAY_ENVIRONMENT'):
+    _load_env_file(BASE_DIR.parent / '.env')
+    _load_env_file(BASE_DIR / '.env')
 
 
 def _env_bool(name, default):
@@ -27,15 +30,24 @@ def _env_bool(name, default):
     return raw.lower() in ('1', 'true', 'yes')
 
 
-SECRET_KEY = os.getenv('SECRET_KEY', 'auditra-secret-key-2026-change-in-production')
+def _env_list(name, default=''):
+    return [item.strip() for item in os.getenv(name, default).split(',') if item.strip()]
 
-DEBUG = _env_bool('DEBUG', True)
 
-ALLOWED_HOSTS = [
-    host.strip()
-    for host in os.getenv('ALLOWED_HOSTS', '*').split(',')
-    if host.strip()
-]
+DEV_SECRET_KEY = 'auditra-secret-key-2026-change-in-production'
+DEV_INGEST_KEY = 'auditra-ingest-dev-key'
+
+# On Railway (or any host that sets RAILWAY_ENVIRONMENT) DEBUG is off unless asked for explicitly.
+DEBUG = _env_bool('DEBUG', not os.getenv('RAILWAY_ENVIRONMENT'))
+
+SECRET_KEY = os.getenv('SECRET_KEY', DEV_SECRET_KEY if DEBUG else '')
+
+ALLOWED_HOSTS = _env_list('ALLOWED_HOSTS', '*' if DEBUG else '')
+if os.getenv('RAILWAY_PUBLIC_DOMAIN'):
+    ALLOWED_HOSTS.append(os.environ['RAILWAY_PUBLIC_DOMAIN'])
+if os.getenv('RAILWAY_ENVIRONMENT'):
+    # Railway's deploy health check calls /api/health/ with this Host header.
+    ALLOWED_HOSTS.append('healthcheck.railway.app')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -54,6 +66,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -82,7 +95,11 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'auditra.wsgi.application'
 
-if os.getenv('DB_ENGINE', 'postgresql') == 'sqlite':
+if os.getenv('DATABASE_URL') and os.getenv('DB_ENGINE', 'postgresql') != 'sqlite':
+    import dj_database_url
+
+    DATABASES = {'default': dj_database_url.parse(os.environ['DATABASE_URL'], conn_max_age=600)}
+elif os.getenv('DB_ENGINE', 'postgresql') == 'sqlite':
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
@@ -114,10 +131,28 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+# Before the first collectstatic (local runs, tests) the folder does not exist yet; that is expected.
+warnings.filterwarnings('ignore', message='No directory at', module='whitenoise.base')
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage'},
+}
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CORS_ALLOW_ALL_ORIGINS = _env_bool('CORS_ALLOW_ALL_ORIGINS', True)
+# The console on Vercel calls the API on Railway, so its origin must be listed here in production.
+CORS_ALLOWED_ORIGINS = _env_list('CORS_ALLOWED_ORIGINS')
+CORS_ALLOW_ALL_ORIGINS = _env_bool('CORS_ALLOW_ALL_ORIGINS', DEBUG and not CORS_ALLOWED_ORIGINS)
+CSRF_TRUSTED_ORIGINS = _env_list('CSRF_TRUSTED_ORIGINS')
+if os.getenv('RAILWAY_PUBLIC_DOMAIN'):
+    CSRF_TRUSTED_ORIGINS.append(f"https://{os.environ['RAILWAY_PUBLIC_DOMAIN']}")
+
+# Railway and Vercel end TLS at their proxy and forward plain HTTP.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+if not DEBUG:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
 
 # REST Framework
 REST_FRAMEWORK = {
@@ -160,6 +195,27 @@ COMPLIANCE_ALERT_RECIPIENTS = [
     if email.strip()
 ]
 
-# Shared secret for the Windows agent and demo replay. Dev default keeps
-# a local presentation working without extra setup.
-INGEST_API_KEY = os.getenv('INGEST_API_KEY', 'auditra-ingest-dev-key')
+# Shared secret for business systems (decisions API) and, when AGENT_KEY_ENROLMENT is on, for registering agents
+# without an enrolment code. The dev default keeps a local presentation working without extra setup.
+INGEST_API_KEY = os.getenv('INGEST_API_KEY', DEV_INGEST_KEY if DEBUG else '')
+
+# Agents normally enrol with a one-time code issued to an employee. The shared key path is for the LAN demo.
+AGENT_KEY_ENROLMENT = _env_bool('AGENT_KEY_ENROLMENT', DEBUG)
+AGENT_INTERVAL_SECONDS = int(os.getenv('AGENT_INTERVAL_SECONDS', '3'))
+AGENT_INVENTORY_MINUTES = int(os.getenv('AGENT_INVENTORY_MINUTES', '10'))
+ENROLMENT_CODE_MINUTES = int(os.getenv('ENROLMENT_CODE_MINUTES', '30'))
+AGENT_DOWNLOAD_URL = os.getenv(
+    'AGENT_DOWNLOAD_URL', 'https://github.com/ataur-rehman/Auditra/releases/latest/download/AuditraAgent.exe'
+)
+MONITORING_NOTICE_VERSION = os.getenv('MONITORING_NOTICE_VERSION', '1')
+
+# Production must not start with the development secrets.
+if not DEBUG:
+    from django.core.exceptions import ImproperlyConfigured
+
+    if not SECRET_KEY or SECRET_KEY == DEV_SECRET_KEY:
+        raise ImproperlyConfigured('Set SECRET_KEY to a long random value when DEBUG is off.')
+    if INGEST_API_KEY == DEV_INGEST_KEY:
+        raise ImproperlyConfigured('INGEST_API_KEY must not be the development key when DEBUG is off.')
+    if not ALLOWED_HOSTS:
+        raise ImproperlyConfigured('Set ALLOWED_HOSTS (or deploy on Railway, which sets RAILWAY_PUBLIC_DOMAIN).')

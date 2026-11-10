@@ -1,6 +1,7 @@
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from django.db import connection
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -29,4 +30,14 @@ def me(request):
         'name': user.get_full_name() or user.username,
         'email': user.email,
         'role': user.role,
+        'employee_id': str(user.employee_id) if user.employee_id else None,
     })
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def health(request):
+    """Public liveness check for Railway: the process is up and the database answers."""
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT 1')
+    return Response({'ok': True})

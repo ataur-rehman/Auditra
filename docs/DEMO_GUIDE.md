@@ -35,17 +35,37 @@ npm run dev
 ```
 Leave it running. It prints `Local: http://localhost:5173/`.
 
-**Window 3: agent** (PowerShell opened with **Run as administrator**)
+**Agent: installed once, runs in the background as SYSTEM.** It starts with Windows, so on demo day there is nothing to start.
+
+To install it the first time, or again after `undo_demo_machine.ps1`:
+1. In the console, open **Admin > Employees & Access** and click the key icon on Bilal's row (**Enrolment code**). Alternatively, give Bilal a portal login (person icon); he signs in, reads the notice and clicks **Get enrolment code**.
+2. **Sign in to Windows as `bilal`**, then double-click `AuditraAgent.exe` (built with `agent\build.ps1 -Server http://<this laptop's IP>:8000`). The installer links whichever Windows account is at the screen to Bilal. Run it from `ataur` instead and your own activity is counted as Bilal's.
+3. At the administrator prompt, type the `ataur` password. Then type the code and click **Install and start monitoring**.
+
+The setup window lists each Windows setting it switched on.
+
+**Rehearsal: watch every event in a window.** Use an *Administrator* PowerShell:
 ```powershell
-cd E:\Auditra\backend
-$env:AUDITRA_VERBOSE="1"
-python -m compliance.agent
+& "C:\Program Files\Auditra\AuditraAgent.exe" stop
+cd E:\Auditra\agent
+python -m auditra_agent run
 ```
-The header must say `Admin : yes`. Within 10 seconds it prints `catalogue folders: c:\auditracompany\biometrics, ...`. Every event it sends is printed as a `>` line. Keep this window visible: it is how you check that something was captured.
+Every event is printed as a `>` line. Press Ctrl+C to stop, then run `& "C:\Program Files\Auditra\AuditraAgent.exe" start`.
+
+The background agent writes its log to `C:\ProgramData\Auditra\logs\agent.log`.
+
+If the server is down, the agent keeps events in `C:\ProgramData\Auditra\outbox.db` and sends them when it comes back.
 
 > If Windows 1 and 2 say the port is already in use, a server from an earlier session is still running. Close the other window, or skip that step because it is already up.
 
-**Check:** open `http://localhost:5173`, sign in as `admin`, and open **Admin > Agents & Health**. `Macbook` should show a green dot, **Administrator**, and the collectors `security, usb, usb_copy, print, web` all `ok`.
+**Check:** open `http://localhost:5173`, sign in as `admin`, and open **Admin > Agents & Health**. The laptop should show:
+- a green dot;
+- owner **Bilal Ahmed**;
+- **Administrator**;
+- the collectors `security, usb, usb_copy, print, web` all `ok`;
+- the Windows checks all green: audit policy, file auditing, print log, Security log, sign-in notice and clock.
+
+A red check names what is wrong and how to fix it.
 
 ---
 
@@ -193,8 +213,8 @@ Every decision is written to **Admin > Audit Trail**. Marking incidents as false
 
 | Symptom | Check |
 |---|---|
-| Nothing appears at all | Agent window: is there a `>` line for the action? If not, the agent didn't see it. If there is but no incident, check the console **Activity** page. |
-| File opens are not captured | Agent header said `Admin : yes`? File in `C:\AuditraCompany`? Opened with Notepad and not just previewed in Explorer (Explorer previews are ignored on purpose)? |
-| USB copy not captured | The agent prints `watching removable drive E:\` when the stick is plugged in. Copy a real file, not a shortcut. |
+| Nothing appears at all | **Agents & Health**: is the laptop online, and is "events waiting to send" growing? Waiting events mean the server is unreachable; they are sent when it is back. Otherwise run `AuditraAgent.exe status` in an Administrator PowerShell: it shows the end of the agent log. Or run `AuditraAgent.exe stop`, then `AuditraAgent.exe run`, to see each `>` line. |
+| File opens are not captured | **Agents & Health**: are the *Security log*, *Audit policy* and *File auditing* checks green? Is the file in a catalogue folder? Did you open it with Notepad, not just preview it in Explorer? Explorer previews are ignored on purpose. |
+| USB copy not captured | The agent log shows `watching removable drive E:\` when the stick is plugged in. Copy a real file, not a shortcut. |
 | Website not captured | Edge can take up to a minute to save history. Close the tab to force it. |
 | Wrong person on an event | **Admin > Employees & Access > Accounts seen by agents but not linked**: link the account to the right employee. |

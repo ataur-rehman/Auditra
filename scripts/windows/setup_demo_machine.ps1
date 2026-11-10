@@ -107,6 +107,6 @@ if (-not (Get-LocalUser -Name 'bilal' -ErrorAction SilentlyContinue)) {
 }
 
 Write-Host ''
-Write-Host 'Done. Switch user to "bilal" once so Windows creates the profile, then start the agent as Administrator:' -ForegroundColor Green
-Write-Host '    cd E:\Auditra\backend'
-Write-Host '    python -m compliance.agent'
+Write-Host 'Done. Switch user to "bilal" once so Windows creates the profile, then install the agent:' -ForegroundColor Green
+Write-Host '    double-click AuditraAgent.exe and type the enrolment code from the console'
+Write-Host '    (or, for a rehearsal: cd E:\Auditra\agent; python -m auditra_agent run)'

@@ -21,6 +21,8 @@ from ..serializers import (
 )
 from .common import AuditedModelMixin, Pages, audit
 
+LIVE_OVERLAP = timedelta(seconds=5)
+
 ACTION_STATUS = {
     'ACKNOWLEDGE': 'ACKNOWLEDGED',
     'INVESTIGATE': 'INVESTIGATING',
@@ -76,8 +78,11 @@ def live(request):
     new_ids = set()
     if since:
         # Later polls: only what changed. The first poll (no since) returns the latest rows to fill the screen.
-        incidents = incidents.filter(updated_at__gt=since)
-        events = events.filter(received_at__gt=since)
+        # A row written by another request just before `now` may commit just after this poll ran, so the window
+        # overlaps the previous one by a few seconds; the console merges rows by id, so repeats are harmless.
+        overlap = since - LIVE_OVERLAP
+        incidents = incidents.filter(updated_at__gt=overlap)
+        events = events.filter(received_at__gt=overlap)
         new_ids = set(Incident.objects.filter(detected_at__gt=since).values_list('id', flat=True)[:50])
     incidents = incidents.order_by('-updated_at')[:50]
     events = events.order_by('-occurred_at')[:50]
@@ -287,7 +292,7 @@ class EmployeeDirectoryViewSet(viewsets.ReadOnlyModelViewSet):
 
     permission_classes = [IsAdminOrComplianceOfficer]
     serializer_class = EmployeeSerializer
-    queryset = Employee.objects.prefetch_related('accounts')
+    queryset = Employee.objects.select_related('login').prefetch_related('accounts', 'agents')
 
     def list(self, request, *args, **kwargs):
         return Response(employee_risk_rows())

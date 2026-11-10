@@ -1,3 +1,4 @@
+import hashlib
 import secrets
 import uuid
 from datetime import timedelta
@@ -48,11 +49,16 @@ class AuditraUser(AbstractUser):
     ROLE_CHOICES = [
         ('admin', 'Admin'),
         ('compliance_officer', 'Compliance Officer'),
+        ('employee', 'Employee'),
     ]
     role = models.CharField(
         max_length=20,
         choices=ROLE_CHOICES,
         default='compliance_officer'
+    )
+    # Set for role 'employee': the monitored person this login belongs to (their own portal only).
+    employee = models.OneToOneField(
+        'Employee', null=True, blank=True, on_delete=models.CASCADE, related_name='login'
     )
 
     def is_admin(self):
@@ -101,6 +107,9 @@ class Employee(models.Model):
     max_sensitivity = models.CharField(max_length=10, choices=SENSITIVITY_CHOICES, default='MEDIUM')
     allowed_categories = models.JSONField(default=list)
     left_at = models.DateTimeField(null=True, blank=True)
+    # The monitoring notice (Art. 13 / 88): which version the employee acknowledged, and when.
+    notice_version = models.CharField(max_length=20, blank=True)
+    notice_acknowledged_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -234,6 +243,13 @@ class Agent(models.Model):
     is_admin = models.BooleanField(default=False)
     console_user = models.CharField(max_length=150, blank=True)
     collectors = models.JSONField(default=dict, blank=True)
+    # Windows configuration the agent checked and applied itself (audit policy, SACLs, logs, clock).
+    checks = models.JSONField(default=dict, blank=True)
+    outbox = models.PositiveIntegerField(default=0)
+    # The person this laptop is assigned to (set by code enrolment). USB plug-ins are attributed to them.
+    employee = models.ForeignKey(
+        'Employee', null=True, blank=True, on_delete=models.SET_NULL, related_name='agents'
+    )
     revoked = models.BooleanField(default=False)
     registered_at = models.DateTimeField(auto_now_add=True)
     last_seen = models.DateTimeField(null=True, blank=True)
@@ -252,6 +268,46 @@ class Agent(models.Model):
 
     def __str__(self):
         return self.hostname
+
+
+ENROLMENT_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'  # no 0/O or 1/I, easy to type from a screen
+
+
+def hash_enrolment_code(code):
+    clean = ''.join(ch for ch in (code or '').upper() if ch.isalnum())
+    return hashlib.sha256(clean.encode('utf-8')).hexdigest()
+
+
+class EnrolmentCode(models.Model):
+    """A one-time code that lets one laptop join Auditra for one employee. Only its hash is stored."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    code_hash = models.CharField(max_length=64, unique=True)
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='enrolment_codes')
+    created_by = models.ForeignKey(AuditraUser, null=True, blank=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+    agent = models.ForeignKey(Agent, null=True, blank=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        db_table = 'enrolment_codes'
+        ordering = ['-created_at']
+
+    @classmethod
+    def issue(cls, employee, user, minutes):
+        """Returns (record, plain code). The plain code is shown once and never stored."""
+        raw = ''.join(secrets.choice(ENROLMENT_ALPHABET) for _ in range(8))
+        record = cls.objects.create(
+            code_hash=hash_enrolment_code(raw), employee=employee,
+            created_by=user if user and user.is_authenticated else None,
+            expires_at=timezone.now() + timedelta(minutes=minutes),
+        )
+        return record, f'{raw[:4]}-{raw[4:]}'
+
+    @property
+    def usable(self):
+        return self.used_at is None and timezone.now() < self.expires_at
 
 
 # ============================================================

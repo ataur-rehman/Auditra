@@ -5,6 +5,44 @@ import { useLive } from '../../lib/live'
 import { ago, full } from '../../lib/format'
 import { Button, Card, CardHeader, Empty, ErrorNote, Input, Modal, PageHeader, Pill, Stat } from '../../components/ui'
 
+const CHECK_LABELS = {
+  security_log: 'Security log',
+  audit_policy: 'Audit policy',
+  file_auditing: 'File auditing',
+  print_log: 'Print log',
+  security_log_size: 'Security log size',
+  sign_in_notice: 'Sign-in notice',
+  clock: 'Clock',
+}
+
+/** What the agent checked and switched on in Windows itself; each failure says how to fix it. */
+function WindowsChecks({ checks }) {
+  const entries = Object.entries(checks || {})
+  if (!entries.length) return <p className="text-[11px] text-ink-3">No Windows checks reported (agent older than 3.0).</p>
+  const failing = entries.filter(([, c]) => !c.ok)
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1.5">
+        {entries.map(([name, c]) => (
+          <Pill key={name} tone={c.ok ? 'ok' : 'crit'}>
+            <span title={c.detail}>{CHECK_LABELS[name] || name}</span>
+          </Pill>
+        ))}
+      </div>
+      {failing.map(([name, c]) => (
+        <p key={name} className="mt-1 text-[11px] text-crit">
+          {CHECK_LABELS[name] || name}: {c.detail}{c.fix && <span className="text-ink-3"> · {c.fix}</span>}
+        </p>
+      ))}
+      {checks.file_auditing?.paths && (
+        <p className="mt-1 font-mono text-[10px] text-ink-3">
+          {Object.entries(checks.file_auditing.paths).map(([p, s]) => `${p}: ${s}`).join(' · ')}
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function Agents() {
   const { version } = useLive()
   const [health, setHealth] = useState(null)
@@ -55,13 +93,20 @@ export default function Agents() {
               </p>
               <p className="mt-0.5 text-xs text-ink-3">{a.ip_address} · v{a.version} · last seen {ago(a.last_seen)}</p>
               <p className="mt-0.5 font-mono text-[11px] text-ink-3">user {a.console_user || '—'}</p>
+              <p className="mt-0.5 text-[11px] text-ink-3">
+                {a.owner ? <>owner <span className="font-medium text-ink-2">{a.owner.full_name}</span></> : 'no owner (registered with the shared key)'}
+              </p>
             </div>
-            <div className="flex flex-1 flex-wrap gap-1.5">
-              {a.is_admin ? <Pill tone="ok">Administrator</Pill> : <Pill tone="warn">not admin: Security log unread</Pill>}
-              {Object.entries(a.collectors || {}).map(([name, status]) => (
-                <Pill key={name} tone={status === 'ok' ? 'ok' : 'crit'}>{name}{status !== 'ok' && `: ${status}`}</Pill>
-              ))}
-              {a.revoked && <Pill tone="crit">revoked</Pill>}
+            <div className="flex min-w-64 flex-1 flex-col gap-2">
+              <div className="flex flex-wrap gap-1.5">
+                {a.is_admin ? <Pill tone="ok">Administrator</Pill> : <Pill tone="warn">not admin: Security log unread</Pill>}
+                {Object.entries(a.collectors || {}).map(([name, status]) => (
+                  <Pill key={name} tone={status === 'ok' ? 'ok' : 'crit'}>{name}{status !== 'ok' && `: ${status}`}</Pill>
+                ))}
+                {a.outbox > 0 && <Pill tone="warn">{a.outbox} event(s) waiting to send</Pill>}
+                {a.revoked && <Pill tone="crit">revoked</Pill>}
+              </div>
+              <WindowsChecks checks={a.checks} />
             </div>
             <div className="text-right text-xs text-ink-3">
               <p className="tabular">{a.event_count} events</p>
@@ -69,7 +114,7 @@ export default function Agents() {
             </div>
             <Button size="sm" variant={a.revoked ? 'secondary' : 'danger'} icon={ShieldOff} onClick={() => revoke(a)}>{a.revoked ? 'Restore' : 'Revoke'}</Button>
           </div>
-        )) : <Empty icon={Monitor} title="No agent has registered yet">Run python -m compliance.agent as Administrator on the monitored laptop.</Empty>}
+        )) : <Empty icon={Monitor} title="No agent has registered yet">Give the employee a portal login (Employees & Access), or an enrolment code, and run AuditraAgent.exe on their laptop.</Empty>}
       </Card>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">

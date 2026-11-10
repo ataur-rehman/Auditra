@@ -1,29 +1,19 @@
-"""Auditra Windows agent.
+"""Collectors: read Windows sources and turn them into small, structured events.
 
-Collects a small set of meaningful, structured events from this PC and sends them to the Auditra server.
 Nothing else leaves the machine: no raw event logs, no full browsing history, no file contents.
 
-Run in a PowerShell window opened with "Run as administrator" (the Security log needs it):
-
-    cd E:\\Auditra\\backend
-    python -m compliance.agent
-
-Environment variables (all optional):
-    AUDITRA_SERVER        http://127.0.0.1:8000      server base URL
-    AUDITRA_ENROLMENT_KEY auditra-ingest-dev-key      key used once to register this machine
-    AUDITRA_INTERVAL      5                           seconds between collection rounds
-
-Collectors
     security   Security log: logons, unlocks, failed logons, lock, account/group/audit-policy changes, log
                cleared, scheduled tasks, file access (4663) inside the catalogue folders
     usb        Plug and Play log: USB storage connected
     usb_copy   watches removable drives; a new file is matched to its source in the catalogue folders
     print      PrintService log: documents printed
-    web        Chrome / Edge history: only visits to the watched file-sharing and social-media domains
-    inventory  every few minutes: path, size and age of files in the catalogue folders (retention check)
+    web        Chrome / Edge / Brave history: only visits to the watched file-sharing and social-media domains
+
+Each collector reads its own bookmark from ``agent.state`` and moves it only after a read succeeded. The runner
+stores the new bookmarks in the outbox in the same transaction as the events, so a bookmark never gets ahead of
+the events it covers.
 """
 import ctypes
-import json
 import os
 import queue
 import re
@@ -39,11 +29,10 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-import requests
-
 try:
     import win32api
     import win32evtlog
+    import win32net
     import win32file
     import win32security
     import win32ts
@@ -57,21 +46,14 @@ except ImportError:  # USB copy detection is optional
     Observer = None
     FileSystemEventHandler = object
 
-VERSION = '2.0'
-SERVER = os.environ.get('AUDITRA_SERVER', os.environ.get('AUDITRA_URL', 'http://127.0.0.1:8000')).rstrip('/')
-if SERVER.endswith('/api/ingest'):
-    SERVER = SERVER[: -len('/api/ingest')]
-ENROLMENT_KEY = os.environ.get('AUDITRA_ENROLMENT_KEY', os.environ.get('AUDITRA_INGEST_KEY', 'auditra-ingest-dev-key'))
-INTERVAL = int(os.environ.get('AUDITRA_INTERVAL', '5'))
-VERBOSE = os.environ.get('AUDITRA_VERBOSE', '') not in ('', '0')
-# The person this laptop is assigned to. Windows does not record who plugs in a USB stick, so device events are
-# given to this account; without it they go to whoever is signed in at the console.
-DEVICE_OWNER = os.environ.get('AUDITRA_DEVICE_OWNER', '').strip()
+from .log import log
+
 SOURCE_READ_WINDOW = 180  # seconds: a copy to USB is attributed to whoever read the source file just before
 MACHINE = socket.gethostname()
-STATE_PATH = Path(__file__).resolve().parent / 'agent_state.json'
 NS = '{http://schemas.microsoft.com/win/2004/08/events/event}'
-FIRST_RUN_LOOKBACK_MS = 120_000
+# On the very first round after install, look back this far so the install session itself is visible.
+FIRST_RUN_LOOKBACK_MS = 600_000
+MAX_RECORDS_PER_ROUND = 2000  # after a long outage the rest is read in the next rounds
 
 SECURITY = 'Security'
 PNP = 'Microsoft-Windows-Kernel-PnP/Configuration'
@@ -86,6 +68,7 @@ BACKGROUND_PROCESSES = {
     'msmpeng.exe', 'searchprotocolhost.exe', 'searchindexer.exe', 'searchfilterhost.exe', 'dllhost.exe',
     'svchost.exe', 'onedrive.exe', 'mssense.exe', 'nissrv.exe', 'compattelrunner.exe', 'tiworker.exe',
     'backgroundtaskhost.exe', 'runtimebroker.exe', 'smartscreen.exe', 'python.exe', 'pythonw.exe',
+    'auditraagent.exe',
 }
 # Explorer reads files to draw thumbnails and previews; its deletes and renames are real user actions.
 READ_ONLY_IGNORED_PROCESSES = {'explorer.exe', 'prevhost.exe'}
@@ -99,10 +82,6 @@ READ_MASK = 0x1
 
 
 # ------------------------------------------------------------------ helpers
-def log(message):
-    print(f'[{datetime.now():%H:%M:%S}] {message}', flush=True)
-
-
 def is_admin():
     try:
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
@@ -154,6 +133,7 @@ def ignored_account(domain, user):
 
 
 def console_account():
+    """The person signed in at this PC's screen, even when the caller runs elevated or as SYSTEM. '' if none."""
     try:
         session = win32ts.WTSGetActiveConsoleSessionId()
         user = win32ts.WTSQuerySessionInformation(None, session, win32ts.WTSUserName)
@@ -162,11 +142,16 @@ def console_account():
             return account_of(domain or MACHINE, user)
     except Exception:
         pass
-    return account_of(MACHINE, os.environ.get('USERNAME', 'unknown'))
+    user = os.environ.get('USERNAME', '')
+    if not user or user.endswith('$'):  # running as SYSTEM with nobody signed in
+        return ''
+    return account_of(MACHINE, user)
 
 
-def device_account():
-    return DEVICE_OWNER or console_account()
+def device_account(agent):
+    """Windows does not record who plugs in a USB stick, so device events go to the laptop's owner (set at
+    enrolment), else to whoever is signed in at the screen."""
+    return agent.device_owner or console_account() or account_of(MACHINE, 'unknown')
 
 
 def sid_to_name(sid_text):
@@ -176,6 +161,65 @@ def sid_to_name(sid_text):
         return f'{domain}\\{name}'
     except Exception:
         return sid_text
+
+
+ONLINE_ID_DOMAINS = {'microsoftaccount'}
+NULL_SID = 'S-1-0-0'
+
+
+class _USER_INFO_24(ctypes.Structure):
+    _fields_ = [('internet_identity', ctypes.c_int), ('flags', ctypes.c_ulong), ('provider', ctypes.c_wchar_p),
+                ('principal', ctypes.c_wchar_p), ('sid', ctypes.c_void_p)]
+
+
+def online_identities():
+    """{'name@outlook.com': 'MACHINE\\\\localname'} for local accounts connected to a Microsoft account."""
+    netapi = ctypes.WinDLL('netapi32')
+    found = {}
+    try:
+        users, _, _ = win32net.NetUserEnum(None, 0)
+    except Exception:
+        return found
+    for user in users:
+        buf = ctypes.c_void_p()
+        if netapi.NetUserGetInfo(None, user['name'], 24, ctypes.byref(buf)) != 0:
+            continue
+        try:
+            info = ctypes.cast(buf, ctypes.POINTER(_USER_INFO_24)).contents
+            if info.internet_identity and info.principal:
+                found[info.principal.lower()] = account_of(MACHINE, user['name'])
+        finally:
+            netapi.NetApiBufferFree(buf)
+    return found
+
+
+class AccountResolver:
+    """One name per person. A Microsoft-account sign-in is logged as MicrosoftAccount\\\\name@outlook.com, but the same
+    person's file access, lock and console session are logged as MACHINE\\\\localname. Logons are reported under the
+    local name so every event of that person links to the same employee."""
+
+    def __init__(self, lookup=None, resolve_sid=None):
+        self.lookup = lookup or online_identities
+        self.resolve_sid = resolve_sid or sid_to_name
+        self.cache = {}
+        self.refreshed = 0.0
+
+    def account(self, domain, user, sid=None):
+        if (domain or '').strip().lower() not in ONLINE_ID_DOMAINS:
+            return account_of(domain, user)
+        key = (user or '').strip().lower()
+        if sid and sid != NULL_SID:
+            name = self.resolve_sid(sid)
+            if '\\' in name and not name.upper().startswith('S-1-'):
+                self.cache[key] = name
+                return name
+        if key not in self.cache and time.monotonic() - self.refreshed > 30:
+            self.refreshed = time.monotonic()
+            try:
+                self.cache.update(self.lookup())
+            except Exception:
+                pass
+        return self.cache.get(key) or account_of(domain, user)
 
 
 def under_any(path, prefixes):
@@ -197,60 +241,6 @@ class Deduper:
         return last is None or now - last > seconds
 
 
-# ------------------------------------------------------------------ state and server
-class State:
-    def __init__(self):
-        self.data = {}
-        if STATE_PATH.is_file():
-            try:
-                self.data = json.loads(STATE_PATH.read_text(encoding='utf-8'))
-            except (OSError, json.JSONDecodeError):
-                self.data = {}
-        if self.data.get('server') != SERVER:
-            self.data = {'server': SERVER}
-
-    def save(self):
-        STATE_PATH.write_text(json.dumps(self.data, indent=1), encoding='utf-8')
-
-    def __getitem__(self, key):
-        return self.data.get(key)
-
-    def __setitem__(self, key, value):
-        self.data[key] = value
-
-
-class Server:
-    def __init__(self, state):
-        self.state = state
-        self.session = requests.Session()
-
-    def _headers(self):
-        return {'X-Agent-Token': self.state['token'] or ''}
-
-    def register(self):
-        response = self.session.post(f'{SERVER}/api/agent/register/', json={
-            'hostname': MACHINE, 'enrolment_key': ENROLMENT_KEY, 'version': VERSION, 'is_admin': is_admin(),
-            'console_user': console_account(),
-        }, timeout=15)
-        if response.status_code != 200:
-            raise RuntimeError(f'registration refused: {response.status_code} {response.text[:200]}')
-        data = response.json()
-        self.state['token'] = data['token']
-        self.state.save()
-        log(f'Registered with {SERVER} as {MACHINE}')
-        return data['config']
-
-    def post(self, path, payload):
-        if not self.state['token']:
-            self.register()
-        response = self.session.post(f'{SERVER}{path}', json=payload, headers=self._headers(), timeout=30)
-        if response.status_code == 401:
-            self.register()
-            response = self.session.post(f'{SERVER}{path}', json=payload, headers=self._headers(), timeout=30)
-        response.raise_for_status()
-        return response.json()
-
-
 # ------------------------------------------------------------------ event-log collectors
 def query_channel(channel, event_ids, state, key):
     """New events of the given IDs since the last record this agent saw, oldest first."""
@@ -263,16 +253,18 @@ def query_channel(channel, event_ids, state, key):
     handle = win32evtlog.EvtQuery(channel, win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryForwardDirection,
                                   xpath)
     roots = []
-    while True:
+    mark = int(last or 0)
+    while len(roots) < MAX_RECORDS_PER_ROUND:
         batch = win32evtlog.EvtNext(handle, 100)
         if not batch:
             break
         for record in batch:
             root = ET.fromstring(win32evtlog.EvtRender(record, win32evtlog.EvtRenderEventXml))
             roots.append(root)
-            record_id = int(system_value(root, 'EventRecordID') or 0)
-            if record_id > int(state[key] or 0):
-                state[key] = record_id
+            mark = max(mark, int(system_value(root, 'EventRecordID') or 0))
+    # The bookmark moves only after the whole read succeeded; the runner persists it together with the events.
+    if mark:
+        state[key] = mark
     return roots
 
 
@@ -282,6 +274,7 @@ class SecurityCollector:
     def __init__(self, agent):
         self.agent = agent
         self.dedupe = Deduper()
+        self.accounts = AccountResolver()
 
     def collect(self):
         out = []
@@ -324,7 +317,7 @@ class SecurityCollector:
                     return None
             else:
                 event_type = 'LOGON_FAILED'
-            event = self.base(root, event_type, account_of(domain, user), event_id)
+            event = self.base(root, event_type, self.accounts.account(domain, user, f.get('TargetUserSid')), event_id)
             event['logon_type'] = logon_type
             ip = f.get('IpAddress')
             if ip and ip not in ('-', '::1', '127.0.0.1'):
@@ -337,7 +330,7 @@ class SecurityCollector:
             user, domain = f.get('TargetUserName'), f.get('TargetDomainName')
             if ignored_account(domain, user):
                 return None
-            return self.base(root, 'LOCK', account_of(domain, user), event_id)
+            return self.base(root, 'LOCK', self.accounts.account(domain, user, f.get('TargetUserSid')), event_id)
 
         if event_id == 4663:
             return self.parse_file_access(root, f)
@@ -370,8 +363,9 @@ class SecurityCollector:
             return event
         if event_id == 4698:
             task = f.get('TaskName') or ''
-            # Windows makes these itself (\Microsoft\..., \SoftLanding\<SID>\...); only user-made tasks matter.
-            if task.lower().startswith(('\\microsoft\\', '\\softlanding\\')):
+            # Windows makes these itself (\Microsoft\..., \SoftLanding\<SID>\...), and \Auditra\ is this agent's own
+            # task (registered by the installer); only user-made tasks matter.
+            if task.lower().startswith(('\\microsoft\\', '\\softlanding\\', '\\auditra\\')):
                 return None
             event = self.base(root, 'TASK_CREATED', actor, event_id)
             event['details'] = {'task_name': task}
@@ -437,7 +431,7 @@ class UsbCollector:
             out.append({
                 'type': 'USB_CONNECTED',
                 'occurred_at': iso_local(system_time(root)),
-                'account': device_account(),
+                'account': device_account(self.agent),
                 'machine': MACHINE,
                 'device': friendly_device(device),
                 'details': {'device_instance': device},
@@ -475,7 +469,7 @@ class PrintCollector:
             event = {
                 'type': 'PRINT',
                 'occurred_at': iso_local(system_time(root)),
-                'account': account_of(MACHINE, user) if user else console_account(),
+                'account': account_of(MACHINE, user) if user else device_account(self.agent),
                 'machine': MACHINE,
                 'file_name': document[:255],
                 'details': {'printer': f.get('Param5', ''), 'pages': f.get('Param8', '')},
@@ -625,7 +619,7 @@ class UsbCopyCollector:
             if reader and time.monotonic() - reader[1] <= SOURCE_READ_WINDOW:
                 account = reader[0]
             else:
-                account = device_account()
+                account = device_account(self.agent)
             event = {
                 'type': 'FILE_COPY_TO_USB',
                 'occurred_at': iso_local(datetime.now(dt_timezone.utc)),
@@ -720,110 +714,3 @@ class WebCollector:
             marks[key] = latest
         self.agent.state['web_marks'] = marks
         return out
-
-
-# ------------------------------------------------------------------ main loop
-class Agent:
-    def __init__(self):
-        self.state = State()
-        self.server = Server(self.state)
-        self.catalogue_paths = []
-        self.watched_domains = {}
-        self.inventory_minutes = 10
-        self.index = CatalogueIndex()
-        self.collectors = []
-        self.health = {}
-        self.recent_access = {}
-        self.last_inventory = 0.0
-        self.last_index = 0.0
-
-    def apply_config(self, config):
-        paths = sorted(config.get('catalogue_paths', []))
-        if paths != self.catalogue_paths:
-            self.catalogue_paths = paths
-            self.last_index = 0
-            log(f'  catalogue folders: {", ".join(paths) or "none yet (add them in Admin > Catalogue)"}')
-        self.watched_domains = config.get('watched_domains', {})
-        self.inventory_minutes = int(config.get('inventory_minutes', 10))
-
-    def start(self):
-        admin = is_admin()
-        print('=' * 64)
-        print(f'  Auditra agent {VERSION}')
-        print(f'  Machine : {MACHINE}')
-        print(f'  Server  : {SERVER}')
-        print(f'  Admin   : {"yes" if admin else "NO - Security log (logons, file access) will not be read"}')
-        print(f'  User    : {console_account()}')
-        if DEVICE_OWNER:
-            print(f'  Owner   : {DEVICE_OWNER} (USB plug-ins are attributed to this account)')
-        print('=' * 64)
-        self.apply_config(self.server.register())
-        self.collectors = [UsbCollector(self), UsbCopyCollector(self), PrintCollector(self), WebCollector(self)]
-        if admin:
-            self.collectors.insert(0, SecurityCollector(self))
-        if Observer is None:
-            log('watchdog is not installed: copies to USB will not be detected (pip install watchdog)')
-
-    def round(self):
-        if time.monotonic() - self.last_index > 300:
-            self.index.rebuild(self.catalogue_paths)
-            self.last_index = time.monotonic()
-
-        events = []
-        for collector in self.collectors:
-            try:
-                found = collector.collect()
-                self.health[collector.name] = 'ok'
-                events.extend(found)
-            except Exception as exc:
-                self.health[collector.name] = f'error: {str(exc)[:120]}'
-                log(f'  {collector.name}: {exc}')
-
-        if events and VERBOSE:
-            for event in events:
-                target = event.get('path') or event.get('domain') or event.get('device') or ''
-                log(f'  > {event["type"]:<20} {event["account"]:<28} {target}')
-        if events:
-            for start in range(0, len(events), 400):
-                result = self.server.post('/api/agent/events/', {'events': events[start:start + 400]})
-                log(f'  sent {result["stored"]} event(s), {result["duplicates"]} duplicate(s), '
-                    f'{result["incidents_created"]} new incident(s)')
-                for incident in result.get('incidents', []):
-                    log(f'    INC-{incident["number"]} {incident["severity"]} {incident["score"]} {incident["title"]}')
-                for problem in result.get('rejected', []):
-                    log(f'    rejected #{problem["index"]}: {problem["error"]}')
-        self.state.save()
-
-        if time.monotonic() - self.last_inventory > self.inventory_minutes * 60 and self.index.files:
-            files = [{'path': path, 'size': size,
-                      'modified_at': datetime.fromtimestamp(mtime).astimezone().isoformat()}
-                     for path, size, mtime in self.index.files]
-            result = self.server.post('/api/agent/inventory/', {'files': files, 'account': console_account()})
-            if result.get('over_retention'):
-                log(f'  inventory: {result["over_retention"]} file(s) past retention')
-            self.last_inventory = time.monotonic()
-
-        config = self.server.post('/api/agent/heartbeat/', {
-            'version': VERSION, 'is_admin': is_admin(), 'console_user': console_account(),
-            'collectors': self.health,
-        })
-        self.apply_config(config['config'])
-
-    def run(self):
-        while True:
-            try:
-                if not self.collectors:
-                    self.start()
-                self.round()
-            except requests.exceptions.ConnectionError:
-                log(f'cannot reach {SERVER}; retrying')
-            except Exception as exc:
-                log(f'error: {exc}')
-            time.sleep(INTERVAL)
-
-
-if __name__ == '__main__':
-    try:
-        Agent().run()
-    except KeyboardInterrupt:
-        print('\nAgent stopped.')

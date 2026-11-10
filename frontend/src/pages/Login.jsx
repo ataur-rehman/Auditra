@@ -15,15 +15,15 @@ export default function Login() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  if (user) return <Navigate to="/" replace />
+  if (user) return <Navigate to={user.role === 'employee' ? '/me' : '/'} replace />
 
   async function submit(e) {
     e.preventDefault()
     setBusy(true)
     setError('')
     try {
-      await login(username, password)
-      navigate('/')
+      const me = await login(username, password)
+      navigate(me.role === 'employee' ? '/me' : '/')
     } catch (err) {
       setError(err?.response?.status === 401 ? 'Wrong username or password.' : errorText(err))
     } finally {
@@ -71,7 +71,7 @@ export default function Login() {
           <div className="mb-6">
             <div className="mb-4 inline-flex rounded-xl border border-line bg-panel p-2.5"><ShieldCheck size={22} className="text-accent" /></div>
             <h2 className="text-xl font-semibold">Sign in</h2>
-            <p className="mt-1 text-sm text-ink-3">Compliance officers and administrators only.</p>
+            <p className="mt-1 text-sm text-ink-3">Compliance officers, administrators, and employees enrolling their laptop.</p>
           </div>
           <Field label="Username">
             <Input autoFocus value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
