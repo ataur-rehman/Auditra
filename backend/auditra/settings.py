@@ -45,6 +45,9 @@ SECRET_KEY = os.getenv('SECRET_KEY', DEV_SECRET_KEY if DEBUG else '')
 ALLOWED_HOSTS = _env_list('ALLOWED_HOSTS', '*' if DEBUG else '')
 if os.getenv('RAILWAY_PUBLIC_DOMAIN'):
     ALLOWED_HOSTS.append(os.environ['RAILWAY_PUBLIC_DOMAIN'])
+if os.getenv('RAILWAY_ENVIRONMENT'):
+    # Railway's deploy health check calls /api/health/ with this Host header.
+    ALLOWED_HOSTS.append('healthcheck.railway.app')
 
 INSTALLED_APPS = [
     'django.contrib.admin',

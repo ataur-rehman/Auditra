@@ -38,10 +38,9 @@ If the API cannot be reached, the agent keeps events in its outbox and sends the
    - The app refuses to start if `SECRET_KEY` or `INGEST_API_KEY` is missing or still the development value.
    - The shared-key agent registration (`AGENT_KEY_ENROLMENT`) is off in production. Laptops enrol with one-time codes.
 4. **Settings > Networking > Generate Domain**, for example `auditra-api.up.railway.app`.
-5. Once the first deploy is green, create the two logins:
-   ```bash
-   railway run python manage.py create_default_users
-   ```
+5. The start command also runs `create_default_users`. On the first deploy it creates `admin` and `compliance_officer` from `ADMIN_PASSWORD` and `OFFICER_PASSWORD`; afterwards it does nothing.
+   - If those passwords are missing, the first deploy stops with a clear message.
+   - Change the passwords later under Admin > Console Users. The variables are only read the first time.
 
 ## 2. Vercel: console
 
@@ -66,7 +65,7 @@ powershell -ExecutionPolicy Bypass -File agent\build.ps1 -Server https://auditra
    1. read the monitoring notice and click **I have read the notice**;
    2. download `AuditraAgent.exe`;
    3. click **Get enrolment code**. The code is valid for 30 minutes and works once.
-3. On the laptop they double-click `AuditraAgent.exe`:
+3. **Signed in to Windows as themselves**, they double-click `AuditraAgent.exe` on the laptop. The installer links whichever Windows account is at the screen; if an IT person installs it from their own session, IT's account is linked instead.
    1. Windows asks for administrator approval. On a standard account, IT types an admin password: that is the permission step.
    2. They enter the code.
 4. The agent then:

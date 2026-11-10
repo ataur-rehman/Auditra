@@ -39,8 +39,8 @@ Leave it running. It prints `Local: http://localhost:5173/`.
 
 To install it the first time, or again after `undo_demo_machine.ps1`:
 1. In the console, open **Admin > Employees & Access** and click the key icon on Bilal's row (**Enrolment code**). Alternatively, give Bilal a portal login (person icon); he signs in, reads the notice and clicks **Get enrolment code**.
-2. Double-click `AuditraAgent.exe` (built with `agent\build.ps1 -Server http://<this laptop's IP>:8000`).
-3. Approve the Windows administrator prompt, type the code and click **Install and start monitoring**.
+2. **Sign in to Windows as `bilal`**, then double-click `AuditraAgent.exe` (built with `agent\build.ps1 -Server http://<this laptop's IP>:8000`). The installer links whichever Windows account is at the screen to Bilal. Run it from `ataur` instead and your own activity is counted as Bilal's.
+3. At the administrator prompt, type the `ataur` password. Then type the code and click **Install and start monitoring**.
 
 The setup window lists each Windows setting it switched on.
 
