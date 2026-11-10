@@ -213,7 +213,7 @@ Every decision is written to **Admin > Audit Trail**. Marking incidents as false
 
 | Symptom | Check |
 |---|---|
-| Nothing appears at all | **Agents & Health**: is the laptop online, and is "events waiting to send" growing? Waiting events mean the server is unreachable; they are sent when it is back. Otherwise read `C:\ProgramData\Auditra\logs\agent.log`, or stop the service and use `python -m auditra_agent run` to see each `>` line. |
+| Nothing appears at all | **Agents & Health**: is the laptop online, and is "events waiting to send" growing? Waiting events mean the server is unreachable; they are sent when it is back. Otherwise run `AuditraAgent.exe status` in an Administrator PowerShell: it shows the end of the agent log. Or run `AuditraAgent.exe stop`, then `AuditraAgent.exe run`, to see each `>` line. |
 | File opens are not captured | **Agents & Health**: are the *Security log*, *Audit policy* and *File auditing* checks green? Is the file in a catalogue folder? Did you open it with Notepad, not just preview it in Explorer? Explorer previews are ignored on purpose. |
 | USB copy not captured | The agent log shows `watching removable drive E:\` when the stick is plugged in. Copy a real file, not a shortcut. |
 | Website not captured | Edge can take up to a minute to save history. Close the tab to force it. |
