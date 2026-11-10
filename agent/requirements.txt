@@ -1,0 +1,5 @@
+# Windows agent (runs on employee laptops). Build the installer with build.ps1.
+requests>=2.32,<3
+pywin32>=306
+watchdog>=4,<7
+pyinstaller>=6.6,<7

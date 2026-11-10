@@ -2,7 +2,7 @@ import unittest
 import xml.etree.ElementTree as ET
 
 try:
-    from .. import agent
+    from auditra_agent import collectors as agent
 except SystemExit:  # pywin32 missing (not Windows)
     agent = None
 

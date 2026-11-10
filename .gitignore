@@ -61,3 +61,7 @@ htmlcov/
 *.tmp
 .cache/
 backups/
+
+# Windows agent build output
+agent/build/
+agent/dist/
