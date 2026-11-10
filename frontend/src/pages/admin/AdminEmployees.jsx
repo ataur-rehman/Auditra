@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Link2, UserCog, X } from 'lucide-react'
-import api from '../../lib/api'
+import { KeyRound, Link2, UserCog, UserRound, X } from 'lucide-react'
+import api, { errorText } from '../../lib/api'
 import { useLive } from '../../lib/live'
-import { CATEGORIES, DAYS, EMPLOYEE_ROLES, ago } from '../../lib/format'
+import { CATEGORIES, DAYS, EMPLOYEE_ROLES, ago, full } from '../../lib/format'
 import Crud from '../../components/Crud'
 import LinkAccountModal from '../../components/LinkAccount'
-import { Button, Card, CardHeader, Empty, PageHeader, Pill } from '../../components/ui'
+import { Button, Card, CardHeader, Empty, Modal, PageHeader, Pill } from '../../components/ui'
 
 const DAY_OPTIONS = Object.fromEntries(DAYS.map((d, i) => [i, d]))
 
@@ -25,6 +25,40 @@ function AccountsCell({ row, reload }) {
       ))}
       {!row.accounts.length && <span className="text-xs text-ink-3">none</span>}
     </div>
+  )
+}
+
+function PortalCell({ row }) {
+  return (
+    <div className="flex flex-col gap-1 text-xs">
+      {row.login_username
+        ? <span className="font-mono text-[11px] text-ink-2">login {row.login_username}</span>
+        : <span className="text-ink-3">no portal login</span>}
+      {row.notice_acknowledged_at
+        ? <Pill tone="ok">notice read · v{row.notice_version}</Pill>
+        : <Pill tone="warn">notice not acknowledged</Pill>}
+      {row.devices.map((d) => (
+        <span key={d.id} className="inline-flex items-center gap-1 text-ink-2">
+          <span className={`h-1.5 w-1.5 rounded-full ${d.online ? 'bg-ok' : 'bg-ink-3'}`} />{d.hostname}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/** Shows a password or an enrolment code once. Neither is stored in readable form on the server. */
+function SecretModal({ secret, onClose }) {
+  return (
+    <Modal open={Boolean(secret)} onClose={onClose} title={secret?.title} subtitle={secret?.subtitle}
+      footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
+      {secret?.rows.map(([label, value]) => (
+        <div key={label} className="mb-3">
+          <p className="text-xs text-ink-3">{label}</p>
+          <p className="select-all font-mono text-lg font-semibold tracking-wider text-ink">{value}</p>
+        </div>
+      ))}
+      <p className="text-xs text-ink-3">This is shown once. Give it to the employee directly, not by a shared channel.</p>
+    </Modal>
   )
 }
 
@@ -55,6 +89,26 @@ export default function AdminEmployees() {
   const { version } = useLive()
   const [tick, setTick] = useState(0)
   const [linking, setLinking] = useState(null)
+  const [secret, setSecret] = useState(null)
+
+  async function createLogin(row) {
+    const reset = Boolean(row.login_username)
+    if (reset && !window.confirm(`Reset the portal password of ${row.full_name}?`)) return
+    try {
+      const { data } = await api.post(`/admin/employees/${row.id}/login/`, {})
+      setSecret({ title: reset ? 'New portal password' : 'Portal login created', subtitle: `${row.full_name} signs in at this console's address.`,
+        rows: [['Username', data.username], ['Temporary password', data.password]] })
+      setTick((t) => t + 1)
+    } catch (e) { window.alert(errorText(e)) }
+  }
+
+  async function issueCode(row) {
+    try {
+      const { data } = await api.post(`/admin/employees/${row.id}/enrolment-code/`)
+      setSecret({ title: 'Enrolment code', subtitle: `Type it in the Auditra Agent setup window on ${row.full_name}'s laptop. Valid until ${full(data.expires_at)}.`,
+        rows: [['Code', data.code]] })
+    } catch (e) { window.alert(errorText(e)) }
+  }
 
   return (
     <>
@@ -82,14 +136,22 @@ export default function AdminEmployees() {
             { key: 's', label: 'Shift', render: (r) => <span className="tabular text-xs text-ink-2">{r.shift_start.slice(0, 5)}–{r.shift_end.slice(0, 5)}<br />{r.work_days.map((d) => DAYS[d]).join(' ')}</span> },
             { key: 'p', label: 'Permissions', render: (r) => <div className="text-xs text-ink-2">up to {r.max_sensitivity}<div className="mt-1 flex flex-wrap gap-1">{r.allowed_categories.map((c) => <Pill key={c}>{c}</Pill>)}</div></div> },
             { key: 'a', label: 'Windows accounts', render: (r) => <AccountsCell row={r} reload={() => setTick((t) => t + 1)} /> },
+            { key: 'o', label: 'Portal & laptops', render: (r) => <PortalCell row={r} /> },
           ]}
-          extraActions={(row) => <Button size="sm" variant="ghost" icon={Link2} title="Link account" onClick={() => setLinking({ employee: row })} />}
+          extraActions={(row) => (
+            <>
+              <Button size="sm" variant="ghost" icon={Link2} title="Link account" onClick={() => setLinking({ employee: row })} />
+              <Button size="sm" variant="ghost" icon={UserRound} title={row.login_username ? 'Reset portal password' : 'Create portal login'} onClick={() => createLogin(row)} />
+              <Button size="sm" variant="ghost" icon={KeyRound} title="Enrolment code for a laptop" onClick={() => issueCode(row)} />
+            </>
+          )}
           emptyText="No employees yet. Add the people whose laptops are monitored."
         />
         <Unlinked version={`${version}-${tick}`} onLink={setLinking} />
       </div>
       <LinkAccountModal open={Boolean(linking)} account={linking?.account} employee={linking?.employee}
         onClose={() => setLinking(null)} onLinked={() => setTick((t) => t + 1)} />
+      <SecretModal secret={secret} onClose={() => setSecret(null)} />
     </>
   )
 }

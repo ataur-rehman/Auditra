@@ -281,6 +281,16 @@ class UserSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('Use at least 8 characters.')
         return value
 
+    def validate_role(self, value):
+        # An employee login must belong to an employee record; those are created from Employees & Access.
+        linked = bool(self.instance and self.instance.employee_id)
+        if value == 'employee' and not linked:
+            raise serializers.ValidationError('Create employee logins from Employees & Access.')
+        if value != 'employee' and linked:
+            raise serializers.ValidationError('This is an employee portal login; it cannot become an officer or '
+                                              'administrator account.')
+        return value
+
     def create(self, validated_data):
         password = validated_data.pop('password', None)
         if not password:
