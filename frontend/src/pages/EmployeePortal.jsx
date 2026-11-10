@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertTriangle, CheckCircle2, Download, KeyRound, Laptop, LogOut, Moon, ShieldCheck, Sun } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Download, FolderDown, KeyRound, Laptop, LogOut, Moon, ShieldCheck, Sun } from 'lucide-react'
 import api, { errorText } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { useTheme } from '../lib/theme'
@@ -177,6 +177,18 @@ export default function EmployeePortal() {
             approval: Auditra needs it to switch on Windows auditing. If your account is not an administrator, ask IT to approve it.</p>
           <div className="mt-3">
             <DownloadAgentButton url={data.download_url} variant={data.acknowledged && !enrolled ? 'primary' : 'secondary'} />
+          </div>
+          <div className="mt-4 rounded-lg border border-line bg-panel-2/50 px-4 py-3 text-[13px]">
+            <p className="font-medium text-ink">Trying Auditra out? Get the test company folder</p>
+            <p className="mt-1 text-ink-2">
+              <span className="font-mono">C:\AuditraCompany</span> holds sample Finance, Payroll, HR, Medical, Legal, Customers and
+              Biometrics files that the organisation's data catalogue already covers. Opening, copying to USB, printing or deleting
+              them creates real events. Either tick <span className="font-medium">Also create the test company folder</span> in the
+              agent's setup window, or download the folder and extract it into <span className="font-mono">C:\</span>.
+            </p>
+            <a href="/AuditraCompany-test.zip" download className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-line-2 bg-panel px-3 text-xs text-ink hover:bg-panel-2">
+              <FolderDown size={14} />Download test folder (zip)
+            </a>
           </div>
         </Step>
 

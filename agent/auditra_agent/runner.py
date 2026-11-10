@@ -17,7 +17,7 @@ from .log import log
 from .outbox import Outbox, drain
 from .paths import OUTBOX, load_config, save_config
 
-CHECK_EVERY = 300  # seconds between full Windows configuration checks
+CHECK_EVERY = 60  # seconds between Windows configuration checks (a folder added later is audited within a minute)
 MAX_BACKOFF = 60
 
 
@@ -187,7 +187,7 @@ class Agent:
 
     # ---------------------------------------------------------------- one round
     def collect(self):
-        if time.monotonic() - self.last_index > 300:
+        if time.monotonic() - self.last_index > 60:
             self.index.rebuild(self.catalogue_paths)
             self.last_index = time.monotonic()
         events = []

@@ -1,4 +1,4 @@
-"""AuditraAgent.exe command line.
+r"""AuditraAgent.exe command line.
 
     AuditraAgent.exe              install (double-click): UAC prompt, enrolment code, background agent
     AuditraAgent.exe uninstall    remove the agent and undo the Windows changes
@@ -6,6 +6,7 @@
     AuditraAgent.exe stop         stop the background agent (for a rehearsal in a window)
     AuditraAgent.exe start        start the background agent again
     AuditraAgent.exe status       state, server, events waiting, and the end of the agent's log
+    AuditraAgent.exe test-folder  create the test company folder C:\AuditraCompany with sample files
     AuditraAgent.exe agent        the background agent itself (started by Task Scheduler as SYSTEM)
 
 Development without building the exe (from the agent folder, in an Administrator PowerShell):
@@ -119,6 +120,19 @@ def main(argv=None):
         return
     if command == 'status':
         status()
+        return
+    if command == 'test-folder':
+        from . import sample_company
+        try:
+            written = sample_company.create()
+            text = f'{sample_company.ROOT} is ready ({len(written)} new file(s)).'
+        except OSError as exc:
+            text = f'Could not create {sample_company.ROOT}: {exc}'
+        ctypes.windll.user32.MessageBoxW(None, text, 'Auditra Agent', 0x40) if getattr(sys, 'frozen', False) else print(text)
+        return
+    if command == 'test-folder-zip':
+        from . import sample_company
+        print(sample_company.write_zip(args[1] if len(args) > 1 else 'AuditraCompany-test.zip'))
         return
     if command in ('stop', 'start'):
         from . import task

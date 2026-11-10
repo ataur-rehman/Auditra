@@ -22,7 +22,7 @@ import winreg
 
 import requests
 
-from . import SERVICE_NAME, VERSION, task, winconfig
+from . import SERVICE_NAME, VERSION, sample_company, task, winconfig
 from .collectors import console_account, is_admin
 from .log import log, setup
 from .outbox import Outbox
@@ -94,7 +94,7 @@ def add_to_apps_list():
         winreg.SetValueEx(key, 'NoRepair', 0, winreg.REG_DWORD, 1)
 
 
-def install(server, code, say):
+def install(server, code, say, test_folder=False):
     say('Checking the enrolment code with the server ...')
     data = enrol(server, code)
     say(f'Enrolled for {data["employee"]}.')
@@ -112,7 +112,7 @@ def install(server, code, say):
     save_config({'server': server.rstrip('/'), 'token': data['token'], 'agent_id': data['agent_id'],
                  'employee': data['employee']})
     try:
-        return _install_steps(data, say)
+        return _install_steps(data, say, test_folder)
     except Exception:
         if task.installed():
             task.start()
@@ -120,7 +120,7 @@ def install(server, code, say):
         raise
 
 
-def _install_steps(data, say):
+def _install_steps(data, say, test_folder=False):
     say('Stopping a previous agent, if any ...')
     stop_previous()
     exe = copy_self()
@@ -128,6 +128,10 @@ def _install_steps(data, say):
     outbox = Outbox(OUTBOX)
     outbox.put('server_config', data['config'])
 
+    if test_folder:
+        written = sample_company.create()
+        say(f'Test company folder {sample_company.ROOT}: {len(written)} file(s) created'
+            + (' (the rest already existed).' if len(written) < len(sample_company.FILES) else '.'))
     say('Switching on Windows auditing ...')
     winconfig.backup_audit_policy()
     checks = {'audit_policy': winconfig.AuditPolicy().ensure(data['config'].get('required_audit', {})),
@@ -247,8 +251,12 @@ def install_window():
     code_var = tk.StringVar()
     code_entry = ttk.Entry(frame, textvariable=code_var, width=20, font=('Consolas', 12))
     code_entry.grid(column=1, row=3, sticky='w', pady=2)
+    test_var = tk.BooleanVar(value=not sample_company.ROOT.exists())
+    ttk.Checkbutton(frame, variable=test_var, text=(
+        f'Also create the test company folder {sample_company.ROOT} (sample Finance, HR, Medical ... files '
+        'for trying Auditra out)')).grid(column=0, row=5, columnspan=2, sticky='w', pady=(8, 0))
     output = tk.Text(frame, width=64, height=12, font=('Consolas', 9), state='disabled')
-    output.grid(column=0, row=5, columnspan=2, pady=(12, 0))
+    output.grid(column=0, row=6, columnspan=2, pady=(12, 0))
     button = ttk.Button(frame, text='Install and start monitoring')
     button.grid(column=0, row=4, columnspan=2, sticky='e', pady=(10, 0))
 
@@ -264,7 +272,7 @@ def install_window():
 
     def work():
         try:
-            checks = install(server_var.get().strip(), code_var.get().strip(), say)
+            checks = install(server_var.get().strip(), code_var.get().strip(), say, test_var.get())
             failing = [k for k, v in checks.items() if not v['ok']]
             say('')
             say('Monitoring is active. You can close this window.' if not failing else
