@@ -48,7 +48,10 @@ export function DownloadAgentButton({ url, variant = 'secondary' }) {
     ? 'bg-accent text-on-accent hover:bg-accent-2 font-medium'
     : 'border border-line-2 bg-panel text-ink hover:bg-panel-2'
   return (
-    <a href={url} className={cx('inline-flex h-9 items-center gap-2 rounded-lg px-3.5 text-sm', style)}>
+    // A new tab: the file normally just downloads; if the host (Google Drive) shows a page first, the console stays
+    // open behind it.
+    <a href={url} target="_blank" rel="noopener noreferrer"
+      className={cx('inline-flex h-9 items-center gap-2 rounded-lg px-3.5 text-sm', style)}>
       <Download size={15} />Download AuditraAgent.exe
     </a>
   )
