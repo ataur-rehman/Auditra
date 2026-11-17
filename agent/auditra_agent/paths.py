@@ -35,7 +35,7 @@ def bundled(name):
 def build_defaults():
     """Values baked in at build time (agent/build.ps1 -Server ...)."""
     try:
-        return json.loads(bundled('defaults.json').read_text(encoding='utf-8'))
+        return json.loads(bundled('defaults.json').read_text(encoding='utf-8-sig'))
     except (OSError, ValueError):
         return {}
 
